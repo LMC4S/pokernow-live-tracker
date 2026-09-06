@@ -13,7 +13,6 @@ tracker and refresh live:
 - **Run-good meter** — for every player (from showdown-revealed cards): card
   luck decomposed street by street (equity swing of each reveal × the pot at
   that moment), plus "setup" counts (big pots lost holding a real hand).
-- **Money flow** — who is paying whom, attributed per hand by pot share.
 
 Equity numbers come from exact runout enumeration postflop and a fixed-seed
 Monte Carlo preflop, so results are reproducible run to run.
@@ -23,7 +22,7 @@ from __future__ import annotations
 
 import random
 from itertools import combinations
-from math import comb, erf, sqrt
+from math import comb, erf, exp, lgamma, log, sqrt
 from typing import Any
 
 from .models import ActionType, Hand, Session, Street
@@ -239,15 +238,21 @@ def _normal_p(z: float) -> float:
 
 
 def _binom_two_sided(k: int, n: int, p: float) -> float:
-    """Exact two-sided binomial p-value (sum of outcomes no more likely than k)."""
+    """Exact two-sided binomial p-value (sum of outcomes no more likely than k).
+    Computed in log space so thousands of hands don't overflow a float."""
     if n == 0:
         return 1.0
-    pk = comb(n, k) * p**k * (1 - p) ** (n - k)
+    lp, lq = log(p), log(1 - p)
+
+    def log_pmf(i: int) -> float:
+        return lgamma(n + 1) - lgamma(i + 1) - lgamma(n - i + 1) + i * lp + (n - i) * lq
+
+    lk = log_pmf(k) + 1e-7
     tot = 0.0
     for i in range(n + 1):
-        pi = comb(n, i) * p**i * (1 - p) ** (n - i)
-        if pi <= pk * 1.0000001:
-            tot += pi
+        li = log_pmf(i)
+        if li <= lk:
+            tot += exp(li)
     return round(min(tot, 1.0), 4)
 
 
@@ -417,8 +422,15 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
     hero = session.hero
     bb = big_blind or 0
 
-    def in_bb(chips: float) -> float | None:
-        return round(chips / bb, 1) if bb else None
+    # Chips are converted to blinds hand by hand, so a merged multi-session
+    # view (see aggregate.py) with different stakes still adds up; ``bb`` is
+    # the fallback for hands that don't record their own blind.
+    def hbb(h: Hand) -> int:
+        return h.big_blind or bb
+
+    def finish(slot: dict[str, Any], bb_sum: float, count: int) -> None:
+        slot["net_bb"] = round(bb_sum, 1) if bb else None
+        slot["bb_per_hand"] = round(bb_sum / count, 2) if bb and count else None
 
     # ---------------- hero card quality ----------------
     hero_cards_by_hand: list[tuple[Hand, list[int]]] = []
@@ -534,6 +546,7 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
             k: {"dealt": 0, "played": 0, "paid": 0, "received": 0, "net": 0}
             for k in ("strong", "pairs_small", "broadway", "other")
         }
+        g_bb = {k: 0.0 for k in g_acc}
         for h, c in hero_cards_by_hand:
             if h.bomb_pot:
                 continue
@@ -544,10 +557,11 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
                 g_acc[g]["paid"] += max(h.contributions.get(hero, 0), 0)
                 g_acc[g]["received"] += h.collected.get(hero, 0)
                 g_acc[g]["net"] += h.net(hero)
-        for g in g_acc.values():
+                if hbb(h):
+                    g_bb[g] += h.net(hero) / hbb(h)
+        for k, g in g_acc.items():
             g["played_pct"] = round(100 * g["played"] / g["dealt"], 1) if g["dealt"] else None
-            g["net_bb"] = in_bb(g["net"])
-            g["bb_per_hand"] = round(g["net"] / bb / g["played"], 2) if bb and g["played"] else None
+            finish(g, g_bb[k], g["played"])
         groups = g_acc
 
         # the same whole-hand ledger, bucketed by the made hand on the flop
@@ -569,24 +583,28 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
             k: {"hands": 0, "paid": 0, "received": 0, "net": 0}
             for k in ("two_pair_plus", "top_pair", "weak_pair", "no_pair")
         }
+        fs_bb = {k: 0.0 for k in fs_acc}
         for h, c in hero_cards_by_hand:
             if h.bomb_pot or len(h.board) < 3 or _folded_preflop(h, hero):
                 continue
             flop = [x for x in (card_int(b) for b in h.board[:3]) if x is not None]
             if len(flop) < 3 or any(x in flop for x in c):
                 continue
-            slot = fs_acc[flop_strength(c, flop)]
+            k = flop_strength(c, flop)
+            slot = fs_acc[k]
             slot["hands"] += 1
             slot["paid"] += max(h.contributions.get(hero, 0), 0)
             slot["received"] += h.collected.get(hero, 0)
             slot["net"] += h.net(hero)
-        for s in fs_acc.values():
-            s["net_bb"] = in_bb(s["net"])
-            s["bb_per_hand"] = round(s["net"] / bb / s["hands"], 2) if bb and s["hands"] else None
+            if hbb(h):
+                fs_bb[k] += h.net(hero) / hbb(h)
+        for k, s in fs_acc.items():
+            finish(s, fs_bb[k], s["hands"])
         flop_str = fs_acc
 
         # pure IP / OOP split over saw-flop hands
         pos_acc = {k: {"hands": 0, "net": 0} for k in ("ip", "oop")}
+        pos_bb = {"ip": 0.0, "oop": 0.0}
         for h, _c in hero_cards_by_hand:
             if h.bomb_pot or len(h.board) < 3 or _folded_preflop(h, hero):
                 continue
@@ -596,9 +614,10 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
             key = "ip" if active[-1] == hero else "oop"
             pos_acc[key]["hands"] += 1
             pos_acc[key]["net"] += h.net(hero)
-        for g in pos_acc.values():
-            g["net_bb"] = in_bb(g["net"])
-            g["bb_per_hand"] = round(g["net"] / bb / g["hands"], 2) if bb and g["hands"] else None
+            if hbb(h):
+                pos_bb[key] += h.net(hero) / hbb(h)
+        for k, g in pos_acc.items():
+            finish(g, pos_bb[k], g["hands"])
         position = pos_acc
 
     # ---------------- table-wide position ledger ----------------
@@ -609,6 +628,8 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
         "oop": {"hands": 0, "net": 0},
     }
     pos_players: dict[str, dict[str, dict[str, Any]]] = {}
+    pos_table_bb = {"ip": 0.0, "oop": 0.0}
+    pos_players_bb: dict[str, dict[str, float]] = {}
     for h in hands:
         if h.bomb_pot or len(h.board) < 3:
             continue
@@ -623,9 +644,15 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
             pslot = pos_players.setdefault(p, {"ip": {"hands": 0, "net": 0}, "oop": {"hands": 0, "net": 0}})[key]
             pslot["hands"] += 1
             pslot["net"] += h.net(p)
-    for slot in list(pos_table.values()) + [s for d in pos_players.values() for s in d.values()]:
-        slot["net_bb"] = in_bb(slot["net"])
-        slot["bb_per_hand"] = round(slot["net"] / bb / slot["hands"], 2) if bb and slot["hands"] else None
+            if hbb(h):
+                pos_table_bb[key] += h.net(p) / hbb(h)
+                pb = pos_players_bb.setdefault(p, {"ip": 0.0, "oop": 0.0})
+                pb[key] += h.net(p) / hbb(h)
+    for key, slot in pos_table.items():
+        finish(slot, pos_table_bb[key], slot["hands"])
+    for p, d in pos_players.items():
+        for key, slot in d.items():
+            finish(slot, pos_players_bb.get(p, {}).get(key, 0.0), slot["hands"])
 
     # ---------------- run-good meter, all players ----------------
     luck_acc: dict[str, dict[str, Any]] = {}
@@ -647,6 +674,7 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
         )
 
     nets: dict[str, int] = {}
+    luck_bb: dict[str, float] = {}
     for h in hands:
         for p in h.players:
             nets[p] = nets.get(p, 0) + h.net(p)
@@ -666,13 +694,15 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
             a = lacc(p)
             a["measured"] += 1
             a["luck"] += r["luck"]
+            if hbb(h):
+                luck_bb[p] = luck_bb.get(p, 0.0) + r["luck"] / hbb(h)
             if any_allin and any(x.player == p and x.all_in for x in h.actions):
                 a["allin_n"] += 1
                 a["allin_luck"] += r["luck"]
             # a "setup": lost a big pot (>= 40 bb) holding a real hand when the
             # money went in — the hit-by-a-train feeling, whether the chips
             # count as bad luck (was ahead) or not (was behind a monster)
-            if not r["won"] and r["commit_hand"] and bb and h.net(p) <= -40 * bb:
+            if not r["won"] and r["commit_hand"] and hbb(h) and h.net(p) <= -40 * hbb(h):
                 a["setup_n"] += 1
                 a["setup_chips"] += h.net(p)
 
@@ -680,26 +710,8 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
         a["net"] = nets.get(p, 0)
         a["luck"] = round(a["luck"])
         a["allin_luck"] = round(a["allin_luck"])
-        a["luck_bb"] = in_bb(a["luck"])
+        a["luck_bb"] = round(luck_bb.get(p, 0.0), 1) if bb else None
         a["adjusted_net"] = a["net"] - a["luck"]
-
-    # ---------------- money flow ----------------
-    flow: dict[str, dict[str, float]] = {}
-    for h in hands:
-        win_nets = {p: h.net(p) for p in h.players if h.net(p) > 0}
-        total_won = sum(win_nets.values())
-        if total_won <= 0:
-            continue
-        for loser in h.players:
-            lost = -h.net(loser)
-            if lost <= 0:
-                continue
-            for winner, wn in win_nets.items():
-                flow.setdefault(winner, {}).setdefault(loser, 0.0)
-                flow[winner][loser] += lost * wn / total_won
-    flow_out = {
-        w: {l: round(v) for l, v in d.items() if round(v) != 0} for w, d in flow.items()
-    }
 
     return {
         "hero": hero,
@@ -716,5 +728,4 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
         "position_table": pos_table,
         "position_players": pos_players,
         "luck": luck_acc,
-        "flow": flow_out,
     }

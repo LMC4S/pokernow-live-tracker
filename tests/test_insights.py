@@ -225,11 +225,6 @@ def test_compute_insights_end_to_end():
     assert pp_alice["ip"] == {"hands": 1, "net": -500, "net_bb": -50.0, "bb_per_hand": -50.0}
     assert pp_alice["oop"]["hands"] == 0
 
-    # money flow: Bob won everything Alice lost across both hands
-    bob_key = next(k for k in ins["flow"] if k.startswith("Bob"))
-    alice_key = next(k for k in ins["flow"][bob_key] if k.startswith("Alice"))
-    assert ins["flow"][bob_key][alice_key] == -alice["net"]  # every chip Alice lost went to Bob
-
 
 def test_card_luck_uses_pot_at_reveal_not_final_pot():
     """A miracle river after calling a tiny bet is only a little luck: the big
@@ -285,10 +280,8 @@ def test_insights_without_hero_cards():
     ins = compute_insights(session, big_blind=10)
     assert ins["quality"] is None
     # only Bob's hand was revealed at showdown, so no luck can be measured —
-    # but the showdown is surfaced as unmeasured for both survivors, and the
-    # money flow still works from the pot accounting alone
+    # but the showdown is surfaced as unmeasured for both survivors
     alice = next(v for k, v in ins["luck"].items() if k.startswith("Alice"))
     assert alice["measured"] == 0
     assert alice["unmeasured_n"] == 1
     assert alice["unmeasured_net"] == -500
-    assert ins["flow"]

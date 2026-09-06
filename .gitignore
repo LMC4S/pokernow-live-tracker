@@ -8,3 +8,4 @@ data/
 .env
 .DS_Store
 .claude/
+identities.json

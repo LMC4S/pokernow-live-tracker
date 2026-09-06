@@ -4,6 +4,30 @@ Fetch, live-track or import [PokerNow](https://www.pokernow.com) (a.k.a. pokerno
 
 Python 3.11+, FastAPI backend, zero-dependency web UI, and a CLI.
 
+## Screenshots
+
+*All images below come from a simulated session with fictional players, not from a real game.*
+
+**Home** — paste a game link to fetch or live-track it, pick an archived game, or drop an export.
+
+![Home screen: game link input and archived games](docs/img/home.png)
+
+**Overview** — session cards, sortable per-player stats, cumulative net by hand.
+
+![Overview tab: summary cards, player stats table and cumulative-net chart](docs/img/overview.png)
+
+**Hands & replayer** — filterable hand list with every revealed hole card; click a hand to step through it street by street.
+
+![Hand list with the replayer open on a 4-bet all-in pot](docs/img/replayer.png)
+
+**Insights · luck** — dealt-card and flop-hit frequencies tested against theoretical rates (hero only), and money luck priced on committed chips for every player, with the *Setups* counter and luck-adjusted net.
+
+![Insights tab: luck as situations and luck as money](docs/img/insights-luck.png)
+
+**Insights · your game & money flow** — whole-hand ledgers by starting hand and by flop made hand, plus the largest net pipelines between players.
+
+![Insights tab: hand-group ledgers and money-flow pipelines](docs/img/insights-game.png)
+
 ## Setup
 
 ```bash

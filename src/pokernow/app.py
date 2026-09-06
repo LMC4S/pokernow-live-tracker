@@ -7,6 +7,7 @@ for a first version; swap :class:`SessionStore` for a database-backed one later.
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ from pydantic import BaseModel
 import os
 import uuid
 
+from .aggregate import ME_ID, ME_NAME, Aggregate, Source, merge_sessions
 from .export import write_exports
 from .fetch import Credentials, FetchError, GameArchive, default_data_dir, parse_game_ref
 from .insights import compute_insights
@@ -60,11 +62,18 @@ class SessionStore:
         return stored
 
     def get(self, sid: str) -> StoredSession:
-        with self._lock:
-            item = self._items.get(sid)
+        item = self.peek(sid)
         if item is None:
             raise HTTPException(status_code=404, detail=f"session {sid!r} not found")
         return item
+
+    def peek(self, sid: str) -> StoredSession | None:
+        with self._lock:
+            return self._items.get(sid)
+
+    def items(self) -> list[StoredSession]:
+        with self._lock:
+            return list(self._items.values())
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -127,6 +136,10 @@ class LiveRequest(BaseModel):
 
 class CookieRequest(BaseModel):
     cookie: str
+
+
+class IdentitiesRequest(BaseModel):
+    same: list[list[str]]  # groups of player IDs that are one person
 
 
 class FetchJobs:
@@ -225,6 +238,97 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     app.state.store = store
     app.state.jobs = jobs
     app.state.live = live
+
+    # "All my sessions": every archive on disk plus every upload, merged on
+    # your player ID. Rebuilt only when a source changes (file mtime for
+    # archives not yet parsed, object identity for sessions in the store).
+    me_lock = threading.Lock()
+    me_cache: dict[str, Any] = {"sig": None, "agg": None}
+    # Manual "same person" groups (player IDs that changed between sessions),
+    # kept next to the archives so they survive restarts.
+    identities_path = os.path.join(jobs.data_dir, "identities.json")
+
+    def read_identities() -> list[list[str]]:
+        try:
+            with open(identities_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return []
+        groups = data.get("same", []) if isinstance(data, dict) else []
+        return [[str(i) for i in g if i] for g in groups if isinstance(g, list) and len([i for i in g if i]) >= 2]
+
+    def write_identities(groups: list[list[str]]) -> None:
+        os.makedirs(jobs.data_dir, exist_ok=True)
+        tmp = identities_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"same": groups}, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, identities_path)
+
+    def build_me() -> Aggregate:
+        sig: list[Any] = []
+        loaders: list[Any] = []
+        same = read_identities()
+        sig.append(("identities", json.dumps(same, sort_keys=True)))
+        if os.path.isdir(jobs.data_dir):
+            for name in sorted(os.listdir(jobs.data_dir)):
+                arch = GameArchive(name, jobs.data_dir)
+                if not arch.exists():
+                    continue
+                cached = store.peek(f"game-{name}")
+                if cached is not None:
+                    sig.append((name, id(cached.session), len(cached.session.hands)))
+                    loaders.append(lambda c=cached, n=name: Source(n, c.session, n))
+                else:
+                    sig.append((name, tuple(sorted(os.path.getmtime(p) for p in arch.files().values()))))
+                    loaders.append(lambda a=arch, n=name: Source(n, load_archive(a), n))
+        for item in store.items():
+            if item.id == ME_ID or item.id.startswith("game-"):
+                continue
+            sig.append((item.id, id(item.session)))
+            loaders.append(lambda i=item: Source(i.name, i.session))
+        key = tuple(sig)
+        with me_lock:
+            if me_cache["sig"] == key and me_cache["agg"] is not None:
+                return me_cache["agg"]
+            agg = merge_sessions([ld() for ld in loaders], same=same)
+            me_cache["sig"], me_cache["agg"] = key, agg
+            if agg.session is not None:
+                store.put(ME_ID, ME_NAME, agg.session)
+            else:
+                store.delete(ME_ID)
+            return agg
+
+    @app.get("/api/me")
+    def me() -> dict[str, Any]:
+        agg = build_me()
+        d = agg.to_dict()
+        d["id"] = ME_ID if agg.session is not None else None
+        return d
+
+    @app.get("/api/identities")
+    def identities() -> dict[str, Any]:
+        return {"same": read_identities(), "path": identities_path}
+
+    @app.put("/api/identities")
+    def set_identities(req: IdentitiesRequest) -> dict[str, Any]:
+        groups = [[i.strip() for i in g if i and i.strip()] for g in req.same]
+        groups = [g for g in groups if len(g) >= 2]
+        write_identities(groups)
+        return {"same": groups, "path": identities_path}
+
+    @app.post("/api/me/load")
+    def me_load() -> dict[str, Any]:
+        agg = build_me()
+        if agg.session is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Could not tell which player is you in any session. Drop the log CSV you download from "
+                       "PokerNow while logged in onto the home screen, or add your login cookie and re-fetch a game.")
+        stored = store.get(ME_ID)
+        # thousands of hands take several seconds of equity math; start now so
+        # the Insights tab is warm by the time it is opened
+        threading.Thread(target=lambda: insights(ME_ID), daemon=True).start()
+        return {"id": stored.id, "name": stored.name, "summary": stored.stats.to_dict(), "aggregate": agg.to_dict()}
 
     @app.get("/api/credentials")
     def credentials_status() -> dict[str, Any]:
@@ -370,8 +474,11 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     def session_summary(sid: str) -> dict[str, Any]:
         s = store.get(sid)
         game_id = s.id[5:] if s.id.startswith("game-") else None
-        return {"id": s.id, "name": s.name, "summary": s.stats.to_dict(), "game_id": game_id,
-                "hero": s.session.hero, "source_format": s.session.source_format, "events": len(s.session.events)}
+        out = {"id": s.id, "name": s.name, "summary": s.stats.to_dict(), "game_id": game_id,
+               "hero": s.session.hero, "source_format": s.session.source_format, "events": len(s.session.events)}
+        if sid == ME_ID and me_cache["agg"] is not None:
+            out["aggregate"] = me_cache["agg"].to_dict()
+        return out
 
     @app.get("/api/sessions/{sid}/players")
     def players(sid: str) -> list[dict[str, Any]]:

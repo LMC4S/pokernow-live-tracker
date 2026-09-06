@@ -139,13 +139,6 @@
   .ins-note { color: var(--muted); font-size: 12px; margin-top: 6px; }
   #ins-root tr.hero-row td { font-weight: 700; }
   .flowrow { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-variant-numeric: tabular-nums; }
-  .flowrow .flow-who { flex: 0 0 92px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-  .flowrow .flow-who.to { text-align: left; color: var(--ink); font-weight: 600; }
-  .flowrow .flow-arrow { color: var(--muted); flex: none; }
-  .flowrow .flow-bar { flex: 1 1 auto; height: 10px; background: var(--hover); border-radius: 5px; overflow: hidden; }
-  .flowrow .flow-bar i { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
-  .flowrow.hero-flow .flow-bar i { background: var(--pos); }
-  .flowrow .flow-amt { flex: 0 0 130px; text-align: right; font-weight: 650; }
   .warn { background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; border-radius: 8px; padding: 8px 12px; margin: 10px 0; font-size: 12.5px; }
   @media (prefers-color-scheme: dark) { .warn { background: #2a1c0e; color: #fdba74; border-color: #7c2d12; } }
   a.open-help { color: var(--accent); cursor: pointer; text-decoration: underline; }
@@ -194,6 +187,13 @@
       <div id="fetch-progress" class="hidden" style="margin-top:8px"></div>
       <div class="err hidden" id="fetch-err"></div>
     </div>
+    <div id="me-box" class="fetchbox hidden" style="margin:14px 0">
+      <div class="fetchrow">
+        <div style="flex:1;min-width:280px"><b>All my sessions</b><div class="muted" style="font-size:12.5px;margin-top:3px">Every archived game and upload in which the tool can tell which player is you, merged into one session by player ID. The same Overview and Insights over all your hands, whatever name you used each night.</div></div>
+        <button id="btn-me">Open</button>
+      </div>
+      <div class="err hidden" id="me-err"></div>
+    </div>
     <div id="archives" class="hidden" style="margin:14px 0">
       <h2>Archived games <small>fetched earlier, stored on this machine</small></h2>
       <div class="panel"><table id="archives-table"><thead><tr><th>Game</th><th>Hands</th><th>Log lines</th><th>Last refresh</th><th></th></tr></thead><tbody></tbody></table></div>
@@ -210,6 +210,7 @@
     <div id="warn" class="warn hidden"></div>
     <div id="files" class="muted hidden" style="font-size:12px;margin:8px 0"></div>
     <div class="grid" id="summary-cards"></div>
+    <div id="me-sources" class="hidden"></div>
 
     <div class="tabs">
       <button class="active" data-tab="overview">Overview</button>
@@ -262,7 +263,7 @@
 
   <div class="mode">
     <h4>1 · Watch &amp; analyze any game <span class="tag">default — no login</span></h4>
-    <p>Paste a game link above. You get every hand, the boards, all cards shown at showdown, the ledger, player stats, luck-vs-the-table and money flow — for everyone at the table. The only thing missing: hole cards that were never shown (including your own).</p>
+    <p>Paste a game link above. You get every hand, the boards, all cards shown at showdown, the ledger, player stats, and luck-vs-the-table — for everyone at the table. The only thing missing: hole cards that were never shown (including your own).</p>
   </div>
 
   <div class="mode">
@@ -298,7 +299,7 @@
 <script>
 (() => {
   const $ = (s) => document.querySelector(s);
-  const state = { sid: null, summary: null, gameId: null, hands: [], sort: { key: 'net', dir: -1 }, filterPlayer: '', selectedHand: null, liveVersion: 0, liveTimer: null, hero: null, handsSort: { key: 'number', dir: 1 }, replayHtml: null, rp: null, rpTimer: null, rpPeek: {}, tab: 'overview', insights: null, insightsFor: null, rpShowAll: (() => { try { return localStorage.getItem('rpShowAll') !== '0'; } catch { return true; } })() };
+  const state = { sid: null, summary: null, gameId: null, hands: [], sort: { key: 'net', dir: -1 }, filterPlayer: '', selectedHand: null, liveVersion: 0, liveTimer: null, hero: null, handsSort: { key: 'number', dir: 1 }, replayHtml: null, rp: null, rpTimer: null, rpPeek: {}, tab: 'overview', insights: null, insightsFor: null, aggregate: null, nArchives: 0, nUploads: 0, rpShowAll: (() => { try { return localStorage.getItem('rpShowAll') !== '0'; } catch { return true; } })() };
   const COLORS = ['#2563eb','#dc2626','#16a34a','#d97706','#7c3aed','#0891b2','#db2777','#65a30d','#ea580c','#4b5563'];
 
   // ---------- helpers ----------
@@ -437,6 +438,7 @@
     let list = [];
     try { list = await api('/api/archives'); } catch { return; }
     $('#archives').classList.toggle('hidden', !list.length);
+    state.nArchives = list.length; updateMeBox();
     $('#archives-table tbody').innerHTML = list.map(a => `<tr data-g="${esc(a.game_id)}" title="Click to open"><td style="text-align:left">${esc(a.game_id)}</td><td>${a.hands ?? '–'}</td><td>${a.log_lines ?? '–'}</td><td>${a.last_refresh ? new Date(a.last_refresh).toLocaleString() : '–'}</td><td><button class="ghost btn-refresh">Refresh</button> <button class="ghost btn-live-a">● Live</button></td></tr>`).join('');
     $('#archives-table').querySelectorAll('tr[data-g]').forEach(tr => {
       const g = tr.dataset.g;
@@ -467,6 +469,68 @@
     const sel = $('#session-select');
     sel.innerHTML = list.map(s => `<option value="${s.id}" ${s.id === state.sid ? 'selected' : ''}>${esc(s.name)} (${s.hands} hands)</option>`).join('');
     sel.classList.toggle('hidden', list.length < 2);
+    state.nUploads = list.filter(s => s.id !== 'me' && !s.id.startsWith('game-')).length; updateMeBox();
+  }
+  function updateMeBox() { $('#me-box').classList.toggle('hidden', !(state.nArchives || state.nUploads)); }
+
+  // ---------- all my sessions ----------
+  $('#btn-me').addEventListener('click', async () => {
+    const btn = $('#btn-me'), err = $('#me-err');
+    btn.disabled = true; btn.textContent = 'Merging…'; err.classList.add('hidden');
+    try {
+      const r = await api('/api/me/load', { method: 'POST' });
+      await loadSession(r.id); await refreshSessionList();
+    } catch (e) {
+      err.textContent = e.message; err.classList.remove('hidden');
+    } finally { btn.disabled = false; btn.textContent = 'Open'; }
+  });
+  function renderMeSources() {
+    const box = $('#me-sources'), a = state.aggregate;
+    if (!a) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    const day = (iso) => iso ? new Date(iso).toLocaleDateString([], { year: '2-digit', month: 'numeric', day: 'numeric' }) : '–';
+    const inc = a.sources.filter(x => x.included);
+    const tot = inc.reduce((t, x) => ({ hands: t.hands + x.your_hands, net: t.net + x.your_net }), { hands: 0, net: 0 });
+    const bbTot = inc.every(x => x.big_blind) ? inc.reduce((t, x) => t + x.your_net / x.big_blind, 0) : null;
+    let html = `<section><h2>Sessions merged <small>· you are <b>${esc(short(a.hero))}</b> · player ID${a.hero_ids.length > 1 ? 's' : ''} ${a.hero_ids.map(i => '<code>' + esc(i) + '</code>').join(' ')} · click a session to open it on its own</small></h2>`;
+    html += `<div class="panel"><table><thead><tr><th style="text-align:left">Session</th><th>Date</th><th>You played as</th><th>Your hands</th><th>Your net</th><th>Net (bb)</th><th>Blinds</th></tr></thead><tbody>`;
+    html += a.sources.map(x => x.included
+      ? `<tr ${x.game_id ? `data-g="${esc(x.game_id)}" style="cursor:pointer"` : ''}><td style="text-align:left">${esc(x.label)}</td><td>${day(x.started_at)}</td><td>${esc(x.you || '–')}</td><td>${num(x.your_hands)} <span class="muted">/ ${num(x.hands)}</span></td><td class="${cls(x.your_net)}">${signed(x.your_net)}</td><td class="${cls(x.your_net)}">${x.big_blind ? signed((x.your_net / x.big_blind).toFixed(1)) : '–'}</td><td>${x.big_blind ?? '–'}</td></tr>`
+      : `<tr class="muted"><td style="text-align:left">${esc(x.label)}</td><td>${day(x.started_at)}</td><td colspan="5" style="text-align:left">skipped, ${esc(x.reason || '')}</td></tr>`).join('');
+    html += `<tr style="border-top:2px solid var(--line)"><td style="text-align:left"><b>${inc.length} session${inc.length === 1 ? '' : 's'}</b></td><td></td><td></td><td><b>${num(tot.hands)}</b></td><td class="${cls(tot.net)}"><b>${signed(tot.net)}</b></td><td class="${cls(tot.net)}"><b>${bbTot == null ? '–' : signed(bbTot.toFixed(1))}</b></td><td></td></tr>`;
+    html += `</tbody></table></div>`;
+    html += `<div class="ins-note">Players are matched by PokerNow player ID, so one person with several nicknames is one row and the earlier names appear as aka in the players table. A player whose ID changed between sessions stays separate unless you mark them as the same person below. Sessions without your ID are skipped. Hands are renumbered in time order. When an uploaded log and a fetched archive cover the same game, each hand counts once and the copy with your hole cards is kept.</div>`;
+    // manual "same person" groups: IDs that changed between sessions
+    const players = [...state.summary.players].sort((x, y) => y.hands - x.hands);
+    const opt = (p) => `<option value="${esc(p.player.split(' @ ').pop())}">${esc(p.name)}${p.aka && p.aka.length ? ' (aka ' + esc(p.aka.slice(0, 3).join(', ')) + (p.aka.length > 3 ? '…' : '') + ')' : ''} · ${num(p.hands)} hands</option>`;
+    html += `<div style="margin-top:12px"><b>Same person</b> <span class="muted" style="font-size:12.5px">When someone shows up under a new player ID, tell the merge they are one player. Saved in <code>identities.json</code> next to the archives.</span></div>`;
+    html += (a.same || []).map((g, i) => `<div class="flowrow" style="padding:3px 0"><span style="flex:1 1 auto">${g.members.map(m => `<span class="pill" title="${esc(m)}">${esc(short(m))}</span>`).join(' = ')} <span class="muted">→ ${esc(short(g.as))}</span></span><a class="same-undo" data-i="${i}" style="color:var(--neg);cursor:pointer;font-size:12.5px">separate</a></div>`).join('');
+    html += `<div class="controls" style="margin-top:6px"><select id="same-a">${players.map(opt).join('')}</select><span class="muted">is the same person as</span><select id="same-b">${players.map(opt).join('')}</select><button class="ghost" id="same-add">Merge</button><span class="err hidden" id="same-err" style="margin:0"></span></div>`;
+    if (a.big_blinds.length > 1) html += `<div class="warn">Mixed stakes (big blind ${a.big_blinds.join(', ')}). Chip totals add different stakes together. The bb figures on the Insights tab convert hand by hand, but Net (bb) and bb/100 in the players table use the most common blind.</div>`;
+    box.innerHTML = html + `</section>`;
+    box.classList.remove('hidden');
+    box.querySelectorAll('tr[data-g]').forEach(tr => tr.addEventListener('click', async () => {
+      const r = await api(`/api/archives/${tr.dataset.g}/load`, { method: 'POST' });
+      await loadSession(r.id); await refreshSessionList();
+    }));
+    const saveSame = async (groups) => {
+      $('#same-err').classList.add('hidden');
+      try {
+        await api('/api/identities', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ same: groups }) });
+        const r = await api('/api/me/load', { method: 'POST' });
+        await loadSession(r.id, { keep: true });
+      } catch (e) { $('#same-err').textContent = e.message; $('#same-err').classList.remove('hidden'); }
+    };
+    $('#same-add').addEventListener('click', async () => {
+      const x = $('#same-a').value, y = $('#same-b').value;
+      if (x === y) { $('#same-err').textContent = 'Pick two different players.'; $('#same-err').classList.remove('hidden'); return; }
+      const cur = (await api('/api/identities')).same;
+      saveSame([...cur, [x, y]]);
+    });
+    box.querySelectorAll('.same-undo').forEach(el => el.addEventListener('click', async () => {
+      const cur = (await api('/api/identities')).same;
+      const ids = new Set(a.same[+el.dataset.i].ids);
+      saveSame(cur.filter(g => !g.some(i => ids.has(i))));
+    }));
   }
   $('#session-select').addEventListener('change', (e) => loadSession(e.target.value));
 
@@ -474,11 +538,11 @@
   async function loadSession(sid, opts = {}) {
     const data = await api('/api/sessions/' + sid);
     const keep = opts.keep && state.sid === sid;
-    state.sid = sid; state.summary = data.summary; state.gameId = data.game_id || null; state.hero = data.hero || null;
+    state.sid = sid; state.summary = data.summary; state.gameId = data.game_id || null; state.hero = data.hero || null; state.aggregate = data.aggregate || null;
     if (!keep) { state.filterPlayer = ''; state.selectedHand = null; }
     $('#session-name').textContent = data.name;
     uploadView.classList.add('hidden'); $('#dash').classList.remove('hidden');
-    renderSummary(); renderPlayers(); renderChart();
+    renderSummary(); renderMeSources(); renderPlayers(); renderChart();
     if (!keep) { $('#f-player').value = ''; $('#f-minpot').value = ''; $('#f-showdown').checked = false; state.selectedHand = null; state.replayHtml = null; }
     state.insightsFor = null;
     if (state.tab === 'insights') loadInsights();
@@ -541,8 +605,10 @@
   function renderSummary() {
     const s = state.summary;
     const cards = [
-      ['Hands', num(s.hands), s.hands_per_hour ? `≈${s.hands_per_hour} per hour` : ''],
-      ['Duration', durTxt(s.duration_minutes), s.started_at ? 'started ' + new Date(s.started_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''],
+      ['Hands', num(s.hands), state.aggregate ? 'all sessions, in time order' : (s.hands_per_hour ? `≈${s.hands_per_hour} per hour` : '')],
+      state.aggregate
+        ? ['Sessions', String(state.aggregate.sources.filter(x => x.included).length), (s.started_at && s.ended_at) ? `${new Date(s.started_at).toLocaleDateString()} – ${new Date(s.ended_at).toLocaleDateString()}` : '']
+        : ['Duration', durTxt(s.duration_minutes), s.started_at ? 'started ' + new Date(s.started_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''],
       ['Blinds', `${fmt(s.small_blind)}/${fmt(s.big_blind)}`, gameShort(s.game_types)],
       ['Avg pot', num(s.avg_pot), s.big_blind && s.avg_pot ? `${(s.avg_pot / s.big_blind).toFixed(1)} bb` : ''],
       ['Biggest pot', num(s.biggest_pot), s.biggest_pot_hand ? `hand #${s.biggest_pot_hand}` : ''],
@@ -656,19 +722,19 @@
     // ---- luck · situations (frequency luck, hero only) + your game (stashed for later) ----
     let gameHtml = '';
     if (!d.hero || !d.hero_cards_known) {
-      html += `<div class="warn">Situation-luck and hand-group stats need your own hole cards. Two ways to unlock them: drop the log CSV you download from PokerNow onto the home screen after the session, or add your login cookie and re-download this game — <a class="open-help">how?</a> Money-luck and money-flow stats below work from showdown-revealed cards only.</div>`;
+      html += `<div class="warn">Situation luck and the hand-group tables need your own hole cards. Drop the log CSV you download from PokerNow onto the home screen after the session, or add your login cookie and re-download this game (<a class="open-help">how?</a>). Money luck below works from cards shown at showdown.</div>`;
     } else {
       const q = d.quality, fh = d.flop_hit, st = d.sets;
-      const cov = d.hero_cards_known < d.hero_dealt ? ` <span class="muted">(cards known for ${d.hero_cards_known}/${d.hero_dealt} hands — showdown-biased sample!)</span>` : '';
-      html += `<section><h2>Luck · situations <small>· how often the deck favored ${esc(short(d.hero))} · scored as frequencies, not chips · ${d.hero_cards_known} hands${cov}</small></h2><div class="grid">`;
+      const cov = d.hero_cards_known < d.hero_dealt ? ` <span class="muted">(cards known for ${d.hero_cards_known} of ${d.hero_dealt} hands, a showdown-biased sample)</span>` : '';
+      html += `<section><h2>Luck · situations <small>· how often the deck favored ${esc(short(d.hero))} · counted as frequencies, not chips · ${d.hero_cards_known} hands${cov}</small></h2><div class="grid">`;
       html += `<div class="card"><div class="k">Cards dealt</div><div class="v">${pct(q.mean_eq)} ${verdict(q.z, 'above average', 'below average')}</div><div class="s">avg strength vs a random deal (${pct(q.null_mean)}) · z = ${q.z}, ${pTxt(q.p)}</div></div>`;
       if (fh) html += `<div class="card"><div class="k">Flop hit rate</div><div class="v">${pct(fh.rate)} ${verdict(fh.z)}</div><div class="s">${fh.hit}/${fh.n} hit vs ${fh.expected} expected (${pct(fh.expected_rate)}) · z = ${fh.z}, ${pTxt(fh.p)}</div></div>`;
       if (st) html += `<div class="card"><div class="k">Sets flopped</div><div class="v">${st.flop_set}/${st.saw_flop} ${verdict(st.flop_p < 0.05 ? (st.flop_set > st.flop_expected ? 2 : -2) : 0)}</div><div class="s">expected ${st.flop_expected} · ${pTxt(st.flop_p)} · those hands netted <b class="${cls(st.flop_set_net)}">${signed(st.flop_set_net)}</b></div></div>`;
       html += `</div>`;
       html += `<div class="ins-cols"><div><div class="panel"><table><thead><tr><th>Premium category</th><th>Dealt</th><th>Expected</th><th>p-value</th></tr></thead><tbody>`;
       html += q.categories.map(c => `<tr><td>${esc(c.name)}</td><td>${c.observed}</td><td>${c.expected}</td><td class="${c.p < 0.05 ? (c.observed > c.expected ? 'pos' : 'neg') : ''}">${c.p}</td></tr>`).join('');
-      html += `</tbody></table></div><div class="ins-note">Two-sided exact binomial tests vs a random deal. Most dealt: ${q.top_classes.map(([c, n2]) => `${esc(c)}×${n2}`).join(', ')}</div></div>`;
-      html += `<div><div class="ins-note" style="margin-top:0">This panel measures <b>how often</b> favorable things happened — good cards dealt, flops hit, sets made — against their theoretical rates. Cashing those situations in through betting is strategy, so it is deliberately not scored in chips here: pricing it would mean guessing how the betting would have gone on a blank runout. The chips-only gamble component is scored separately below, as <b>Luck · money</b>.<br><b>Read the badges with care:</b> this panel runs ~9 tests at once, so one nominally significant result per session is roughly what chance alone produces; badges light only beyond |z| ≈ 2, and the set test is a subset of the hit-rate test — when both glow it is largely the same few hands counted twice.</div></div></div></section>`;
+      html += `</tbody></table></div><div class="ins-note">Two-sided binomial tests against a random deal. Most dealt: ${q.top_classes.map(([c, n2]) => `${esc(c)}×${n2}`).join(', ')}</div></div>`;
+      html += `<div><div class="ins-note" style="margin-top:0">These cards count how often good things happened, strong hands dealt, flops hit, sets made, each against its theoretical rate. They are counted as frequencies rather than chips because the money made from them depends on the betting. The chip side of luck is in Luck · money below. About nine tests run here, so one lit badge per session is normal. Badges light beyond |z| ≈ 2. The set test is part of the hit-rate test, so when both light up they are mostly the same hands.</div></div></div></section>`;
 
       // your game: whole-hand paid/received/net, by starting-hand group and by flop strength
       const G = d.groups || {}, FS = d.flop_strength || {};
@@ -686,26 +752,26 @@
         t += `<tr style="border-top:2px solid var(--line)"><td><b>Total</b></td><td><b>${tot.n}</b></td><td><b>${num(tot.paid)}</b></td><td><b>${num(tot.received)}</b></td><td class="${cls(tot.net)}"><b>${signed(tot.net)}</b></td><td></td></tr>`;
         return t + `</tbody></table></div>`;
       };
-      gameHtml = `<section><h2>Your game <small>· whole-hand money: what you paid in, what the pots paid back</small></h2><div class="ins-cols">`;
+      gameHtml = `<section><h2>Your game <small>· whole-hand money: paid in and collected from pots</small></h2><div class="ins-cols">`;
       gameHtml += `<div>` + ledgerTable('By starting hand (played)', GLAB, G,
         (s) => ({ n: s.played || 0, txt: `${s.played || 0}/${s.dealt || 0}${s.played_pct != null ? ` <span class="muted">(${s.played_pct}%)</span>` : ''}` }));
-      gameHtml += `<div class="ins-note">Hands you voluntarily played, whole-hand accounting: Paid = every chip in (blinds included), Received = collected from pots, Net = the difference. The Total differs from your session net only by hands you didn't choose to play — blinds folded and free big-blind checks.</div></div>`;
+      gameHtml += `<div class="ins-note">Hands you chose to play. Paid is every chip put in, blinds included. Received is what the pots paid back. Net is the difference. The total differs from your session net by the hands you did not choose to play, meaning folded blinds and free big-blind checks.</div></div>`;
       gameHtml += `<div>` + ledgerTable('By flop made hand', FSLAB, FS, (s) => ({ n: s.hands || 0, txt: String(s.hands || 0) }));
-      gameHtml += `<div class="ins-note">Same whole-hand accounting over every flop you saw, bucketed by your made hand <b>on the flop</b> (draws count as what they currently are). This sample differs from the left table's: it includes free big-blind flops and excludes played hands that ended preflop, so the two Totals need not match. Small samples — one big pot can dominate a row. Your IP/OOP split lives in the Position section below.</div></div></div></section>`;
+      gameHtml += `<div class="ins-note">The same accounting over every flop you saw, grouped by your made hand on the flop. A draw counts as whatever it is at that point. This table includes free big-blind flops and leaves out played hands that ended preflop, so its total differs from the left table. One big pot can dominate a row. Your own IP and OOP split is in the Position section.</div></div></div></section>`;
     }
 
     // ---- run-good meter ----
     const luckRows = Object.entries(d.luck || {}).sort((a, b2) => b2[1].luck - a[1].luck);
     if (luckRows.length) {
-      html += `<section><h2>Luck · money <small>· gamble outcomes on chips already in the middle · all players, from showdown-revealed cards</small></h2><div class="panel"><table><thead><tr><th>Player</th><th>Net</th><th>Measured SDs</th><th>Money luck</th><th>All-in hands (luck)</th><th>Setups</th><th>Luck-adj net</th></tr></thead><tbody>`;
+      html += `<section><h2>Luck · money <small>· card luck priced on chips already in the pot · all players · from cards shown at showdown</small></h2><div class="panel"><table><thead><tr><th>Player</th><th>Net</th><th>Measured SDs</th><th>Money luck</th><th>All-in hands (luck)</th><th>Setups</th><th>Luck-adj net</th></tr></thead><tbody>`;
       html += luckRows.map(([p, a]) => `<tr class="${p === d.hero ? 'hero-row' : ''}"><td>${esc(short(p))}${p === d.hero ? ' <span class="tag">you</span>' : ''}</td><td class="${cls(a.net)}">${signed(a.net)}</td><td>${a.measured}</td><td class="${cls(a.luck)}" title="${a.luck_bb != null ? signed(a.luck_bb) + ' bb' : ''}">${signed(a.luck)}</td><td>${a.allin_n}${a.allin_n ? ` <span class="${cls(a.allin_luck)}">(${signed(a.allin_luck)})</span>` : ''}</td><td>${a.setup_n}${a.setup_n ? ` <span class="neg">(${signed(a.setup_chips)})</span>` : ''}</td><td class="${cls(a.adjusted_net)}">${signed(a.adjusted_net)}</td></tr>`).join('');
-      html += `</tbody></table></div><div class="ins-note"><b>Money luck</b>: pure gamble outcome — for each flop/turn/river card, (equity after − equity before) × the pot at that moment, summed. Only money already in the middle rides on a card: a rivered draw after calling a small bet scores as small luck here (the favorable situation itself belongs to Luck · situations above), while the same river with stacks already in scores in full. Zero-sum across the table. <b>What it cannot see:</b> this is luck <i>among revealed showdowns</i> — a scare card that makes you fold, and any mucked showdown, never gets scored — so <b>Luck-adj net</b> (= net − money luck, nothing else) is "net minus showdown gamble outcomes", not a full skill measure. <b>Measured SDs</b>: the scoreable showdowns (2+ hands revealed). <b>All-in hands (luck)</b>: the whole-hand luck of hands where that player was all-in (including swings from before the all-in). <b>Setups</b> is the can't-catch-a-break count, not part of the arithmetic: measured showdowns lost ≥ 40 bb while holding a real hand (top pair or better — preflop JJ+/AK) when the money went in. It counts both beats (was ahead, got outdrawn — also inside money luck, so don't subtract setups from adjusted net) and coolers (ran into a monster — priced nowhere else). Read it against Luck-adj net: adjusted losses that are mostly setups mean the player got run over; mostly <i>not</i> setups means the damage was self-inflicted.</div></section>`;
+      html += `</tbody></table></div><div class="ins-note">Money luck prices each flop, turn and river card as the change in equity times the pot at that moment, summed over the hand. Only money already in the pot counts, so a rivered draw after a small call scores little and the same river with the stacks in scores in full. It sums to zero across the table. Only showdowns where two or more hands were revealed are scored. Folds to scare cards and mucked hands are not, so Luck-adj net is net minus showdown luck and nothing else. Measured SDs is the number of scored showdowns. All-in hands is how many hands the player was all in, with the luck in those hands. Setups counts scored showdowns lost for 40 bb or more while holding top pair or better when the money went in, or JJ+ and AK preflop. It includes both outdraws and coolers. Outdraws are already inside money luck, so do not subtract setups from adjusted net. A large adjusted loss made mostly of setups means the player ran into hands. One with few setups means the losses came from other spots.</div></section>`;
     }
     // ---- table-wide position ledger (needs no hole cards) ----
     const PT = d.position_table;
     if (PT && (PT.ip.hands || PT.oop.hands)) {
       const pc = (k, lab) => { const g = PT[k]; return `<div class="card"><div class="k">${lab}</div><div class="v ${cls(g.net)}">${signed(g.net)}</div><div class="s">${g.hands} player-hands · ${g.bb_per_hand != null ? signed(g.bb_per_hand.toFixed(2)) + ' bb/hand' : '–'}</div></div>`; };
-      html += `<section><h2>Position <small>· every player, every flop seen — no hole cards needed</small></h2><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));max-width:560px">${pc('ip', 'In position (last to act)')}${pc('oop', 'Out of position')}</div>`;
+      html += `<section><h2>Position <small>· every player, every flop seen · no hole cards needed</small></h2><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));max-width:560px">${pc('ip', 'In position (last to act)')}${pc('oop', 'Out of position')}</div>`;
       const PP = d.position_players || {};
       const ppRows = Object.entries(PP).sort((a, b2) => (b2[1].ip.net + b2[1].oop.net) - (a[1].ip.net + a[1].oop.net));
       if (ppRows.length) {
@@ -714,36 +780,10 @@
         html += ppRows.map(([p2, g]) => `<tr class="${p2 === d.hero ? 'hero-row' : ''}"><td>${esc(short(p2))}${p2 === d.hero ? ' <span class="tag">you</span>' : ''}</td>${half(g.ip)}${half(g.oop)}</tr>`).join('');
         html += `</tbody></table></div>`;
       }
-      html += `<div class="ins-note">Net chips won when acting last postflop (IP) vs earlier (OOP), across all ${PT.ip.hands + PT.oop.hands} flop-seen player-hands. <b>This is a ledger, not a measurement of positional skill:</b> the OOP pool carries the blind tax and forced defends with weak hands, while the IP pool holds freely chosen (stronger) ranges — so everyone looks better IP, and the gap mixes position, range and blind money. Judge a player's OOP number against the table's, not against zero. IP and OOP don't sum to zero (preflop folders' blinds are in these pots), and per-player samples are small — one big pot can dominate a row.</div></section>`;
+      html += `<div class="ins-note">Net chips when acting last after the flop (IP) and when acting earlier (OOP), over ${PT.ip.hands + PT.oop.hands} flop-seen player-hands. This is bookkeeping, not a measure of positional skill. The OOP pool includes the blinds and forced defends with weak hands, while the IP pool is chosen ranges, so everyone looks better in position. Compare a player's OOP number with the table's rather than with zero. IP and OOP do not sum to zero because folded blinds are in these pots. Per-player samples are small and one big pot can dominate a row.</div></section>`;
     }
 
     html += gameHtml;
-
-    // ---- money flow: biggest net pipelines, at a glance ----
-    const flow = d.flow || {};
-    const names = [...new Set([...Object.keys(flow), ...Object.values(flow).flatMap(o => Object.keys(o))])];
-    if (names.length > 1) {
-      const get = (w, l) => (flow[w] && flow[w][l]) || 0;
-      const pipes = [];
-      for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
-        const net = Math.round(get(names[i], names[j]) - get(names[j], names[i]));
-        if (net) pipes.push(net > 0 ? { from: names[j], to: names[i], v: net } : { from: names[i], to: names[j], v: -net });
-      }
-      pipes.sort((a, b2) => b2.v - a.v);
-      const minShow = bb ? 5 * bb : 0;
-      const shown = pipes.filter((p2, i) => p2.v >= minShow || i < 5).slice(0, 12);
-      const maxV = shown.length ? shown[0].v : 1;
-      html += `<section><h2>Money flow <small>· the biggest net pipelines this session</small></h2><div class="panel" style="padding:12px 16px">`;
-      html += shown.map(p2 => {
-        const hero2 = p2.from === d.hero || p2.to === d.hero;
-        return `<div class="flowrow${hero2 ? ' hero-flow' : ''}">
-          <span class="flow-who">${esc(short(p2.from))}</span><span class="flow-arrow">⟶</span><span class="flow-who to">${esc(short(p2.to))}${p2.to === d.hero ? ' <span class="tag">you</span>' : ''}</span>
-          <span class="flow-bar"><i style="width:${Math.max(2, 100 * p2.v / maxV).toFixed(1)}%"></i></span>
-          <span class="flow-amt">${num(p2.v)}${bb ? ` <span class="muted">(${Math.round(p2.v / bb)} bb)</span>` : ''}</span>
-        </div>`;
-      }).join('');
-      html += `</div><div class="ins-note">Net chips from one player to another (each pot's losses split among its winners by share). Pipelines under 5 bb are hidden.</div></section>`;
-    }
 
     $('#ins-root').innerHTML = html || '<div class="muted" style="padding:20px">Nothing to compute yet.</div>';
   }
@@ -1020,7 +1060,8 @@
     state.rpPeek = {};
     if (state.rpTimer) { clearInterval(state.rpTimer); state.rpTimer = null; }
 
-    let html = `<h3>Hand #${h.number} <span class="pill">${esc(h.game_type)}</span>${h.bomb_pot ? ' <span class="pill">bomb pot</span>' : ''}${h.double_board ? ' <span class="pill">double board</span>' : ''}${h.run_it_twice ? ' <span class="pill">run it twice</span>' : ''}</h3>`;
+    const origin = state.aggregate && h.notes && h.notes.length ? ` <span class="muted" style="font-weight:normal;font-size:12px">${esc(h.notes[0])}</span>` : '';
+    let html = `<h3>Hand #${h.number}${origin} <span class="pill">${esc(h.game_type)}</span>${h.bomb_pot ? ' <span class="pill">bomb pot</span>' : ''}${h.double_board ? ' <span class="pill">double board</span>' : ''}${h.run_it_twice ? ' <span class="pill">run it twice</span>' : ''}</h3>`;
     html += `<div class="rp">
       <div class="rp-pods" id="rp-pods"></div>
       <div class="rp-center">

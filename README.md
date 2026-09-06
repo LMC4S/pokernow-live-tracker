@@ -24,10 +24,6 @@ Python 3.11+, FastAPI backend, zero-dependency web UI, and a CLI.
 
 ![Insights tab: luck as situations and luck as money](docs/img/insights-luck.png)
 
-**Insights · your game & money flow** — whole-hand ledgers by starting hand and by flop made hand, plus the largest net pipelines between players.
-
-![Insights tab: hand-group ledgers and money-flow pipelines](docs/img/insights-game.png)
-
 ## Setup
 
 ```bash

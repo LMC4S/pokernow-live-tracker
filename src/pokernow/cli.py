@@ -20,11 +20,13 @@ def _load(path: str):
     return parse_file(path)
 
 
-def _fmt(v, width: int = 6) -> str:
+def _fmt(v, width: int = 6, inf_at: float | None = None) -> str:
+    """Right-align a cell. ``inf_at`` is the sentinel a stat uses for infinity
+    (AF is encoded as 999.0 in ``to_dict`` so it stays JSON-safe)."""
     if v is None:
         return "-".rjust(width)
     if isinstance(v, float):
-        if v >= 999:
+        if inf_at is not None and v >= inf_at:
             return "inf".rjust(width)
         return f"{v:.1f}".rjust(width)
     return str(v).rjust(width)
@@ -61,7 +63,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
             _fmt(p.vpip, widths[5]),
             _fmt(p.pfr, widths[6]),
             _fmt(p.three_bet, widths[7]),
-            _fmt(d["af"], widths[8]),
+            _fmt(d["af"], widths[8], inf_at=999.0),
             _fmt(p.wtsd_pct, widths[9]),
             _fmt(p.wsd_pct, widths[10]),
             _fmt(p.cbet_pct, widths[11]),

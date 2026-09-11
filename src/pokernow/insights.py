@@ -12,7 +12,10 @@ tracker and refresh live:
   pure in-position / out-of-position split.
 - **Run-good meter** — for every player (from showdown-revealed cards): card
   luck decomposed street by street (equity swing of each reveal × the pot at
-  that moment), plus "setup" counts (big pots lost holding a real hand).
+  that moment), plus every big pot lost at showdown sorted into *outdrawn*
+  (ahead when the money went in), *cooler* (behind, but holding a hand nobody
+  folds) or *other*. Each hand also gets a Gambit-style "top X% of hands"
+  strength percentile at the street the money went in.
 
 Equity numbers come from exact runout enumeration postflop and a fixed-seed
 Monte Carlo preflop, so results are reproducible run to run.
@@ -26,6 +29,7 @@ from math import comb, erf, exp, lgamma, log, sqrt
 from typing import Any
 
 from .models import ActionType, Hand, Session, Street
+from .stats import PlayerStats, compute_hand_stats
 
 VOLUNTARY = {ActionType.CALL, ActionType.BET, ActionType.RAISE}
 
@@ -62,6 +66,40 @@ def hand_class(cards: list[int]) -> str:
     if r1 == r2:
         return r1 + r2
     return r1 + r2 + ("s" if (a & 3) == (b & 3) else "o")
+
+
+def card_str(c: int) -> str:
+    return RANKS[c >> 2] + "shdc"[c & 3]
+
+
+_CAT_NAMES = ["High card", "Pair", "Two pair", "Three of a kind", "Straight", "Flush", "Full house", "Four of a kind", "Straight flush"]
+_RANK_WORD = ["deuces", "threes", "fours", "fives", "sixes", "sevens", "eights", "nines", "tens", "jacks", "queens", "kings", "aces"]
+_HIGH_WORD = ["deuce", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "jack", "queen", "king", "ace"]
+
+
+def best_five(cards: list[int]) -> tuple[list[int], str]:
+    """The five cards that make the best hand out of 5-7, plus a short name
+    for it ("Two pair, aces and sixes")."""
+    best = None
+    for five in combinations(cards, 5):
+        sc = eval7(list(five))
+        if best is None or sc > best[0]:
+            best = (sc, list(five))
+    assert best is not None
+    sc, five = best
+    cat = sc[0]
+    if cat in (1, 3, 7):
+        desc = {1: "Pair of ", 3: "Three ", 7: "Four "}[cat] + _RANK_WORD[sc[1]]
+    elif cat == 2:
+        desc = f"Two pair, {_RANK_WORD[sc[1]]} and {_RANK_WORD[sc[2]]}"
+    elif cat == 6:
+        desc = f"Full house, {_RANK_WORD[sc[1]]} over {_RANK_WORD[sc[2]]}"
+    elif cat in (4, 5, 8):
+        desc = f"{_CAT_NAMES[cat]}, {_HIGH_WORD[sc[1]]} high"
+    else:
+        desc = f"{_HIGH_WORD[sc[1]].capitalize()} high"
+    five.sort(key=lambda c: -(c >> 2))
+    return five, desc
 
 
 def class_combos(cls: str) -> int:
@@ -330,6 +368,49 @@ def _made_hand(holes: list[int], prefix: list[int]) -> bool:
     return score[0] >= 2 and (pocket or bool({r1, r2} & board_ranks))  # two pair / trips using a hole card
 
 
+def _cooler_hand(holes: list[int], prefix: list[int]) -> bool:
+    """A hand nobody folds when the money goes in: preflop JJ+/AK, postflop an
+    overpair or two pair and better using a hole card. Bare top pair is a real
+    hand (see _made_hand) but losing with it to a set is not a cooler."""
+    if not _made_hand(holes, prefix):
+        return False
+    if not prefix:
+        return True
+    r1, r2 = holes[0] >> 2, holes[1] >> 2
+    if r1 == r2 and r1 > max(c >> 2 for c in prefix):
+        return True  # overpair
+    return eval7(holes + prefix)[0] >= 2  # two pair or better (top pair alone is category 1)
+
+
+_PRE_PCT: dict[str, float] = {}
+
+
+def hand_percentile(holes: list[int], prefix: list[int]) -> float:
+    """Fraction of all two-card hands this one beats on this board, ties
+    counted half. Preflop it ranks the starting hand by equity vs a random
+    hand; postflop it ranks the current best five cards against every combo
+    still in the deck — "top X% of hands" at that moment."""
+    if not prefix:
+        if not _PRE_PCT:
+            for k, v in PRE_EQ.items():
+                below = sum(class_combos(c) for c, e in PRE_EQ.items() if e < v)
+                ties = class_combos(k)
+                _PRE_PCT[k] = (below + ties / 2) / _TOTAL_COMBOS
+        return _PRE_PCT[hand_class(holes)]
+    dead = set(holes) | set(prefix)
+    deck = [c for c in range(52) if c not in dead]
+    mine = eval7(holes + prefix)
+    below = ties = n = 0
+    for a, b in combinations(deck, 2):
+        n += 1
+        other = eval7([a, b] + prefix)
+        if other < mine:
+            below += 1
+        elif other == mine:
+            ties += 1
+    return (below + ties / 2) / n
+
+
 def _hand_luck(hand: Hand) -> dict[str, dict[str, Any]] | None:
     """Per-player card luck for a showdown hand, decomposed street by street.
 
@@ -383,6 +464,7 @@ def _hand_luck(hand: Hand) -> dict[str, dict[str, Any]] | None:
     eq_flop = equities(holes, board[:3])
     eq_turn = equities(holes, board[:4])
     eq_river = equities(holes, board[:5])  # resolves to the actual result
+    eq_by_street = {Street.PREFLOP: eq_pre, Street.FLOP: eq_flop, Street.TURN: eq_turn, Street.RIVER: eq_river}
     out: dict[str, dict[str, Any]] = {}
     for i, p in enumerate(players):
         luck = (
@@ -390,15 +472,62 @@ def _hand_luck(hand: Hand) -> dict[str, dict[str, Any]] | None:
             + (eq_turn[i] - eq_flop[i]) * pot_at_turn
             + (eq_river[i] - eq_turn[i]) * pot_at_river
         )
-        commit = _commit_street(hand, p)
+        commit = _commit_street(hand, p)  # the street where their money went in
+        prefix = board[: _STREET_BOARD_LEN[commit]]
+        eq_c = eq_by_street[commit]
         out[p] = {
             "luck": luck,
             "won": eq_river[i] > 0.5,
-            # a real hand (top pair+, preflop JJ+/AK) on the street where
-            # their money went in — the raw material of a "setup" loss
-            "commit_hand": _made_hand(known[p], board[: _STREET_BOARD_LEN[commit]]),
+            "commit": commit.value,
+            # was the hand the favourite against the hands actually out there?
+            "ahead": eq_c[i] >= max(e for j, e in enumerate(eq_c) if j != i),
+            # a hand nobody folds — the raw material of a cooler
+            "cooler_hand": _cooler_hand(known[p], prefix),
+            "eq_commit": eq_c[i],
+            # Gambit-style strength: share of all two-card hands beaten right then
+            "pct": hand_percentile(known[p], prefix),
         }
     return out
+
+
+BIG_LOSS_BB = 40  # a showdown loss this size gets sorted into outdrawn / cooler / other
+COOLER_PCT = 0.85  # ...and "cooler" also needs the hand to beat this share of all hands
+
+
+def _is_cooler(r: dict[str, Any]) -> bool:
+    """Behind when the money went in, holding a hand nobody folds: the right
+    shape (overpair, two pair+, JJ+/AK) *and* strong against the whole deck
+    right then, so bottom two pair on a paired board does not qualify."""
+    return not r["ahead"] and r["cooler_hand"] and r["pct"] >= COOLER_PCT
+
+
+def _big_loss_kind(hand: Hand, player: str, r: dict[str, Any], bb: int) -> str | None:
+    if r["won"] or not bb or hand.net(player) > -BIG_LOSS_BB * bb:
+        return None
+    return "outdrawn" if r["ahead"] else "cooler" if _is_cooler(r) else "other"
+
+
+def _street_phrase(st: str) -> str:
+    return "preflop" if st == "preflop" else f"on the {st}"
+
+
+def hand_luck(hand: Hand, big_blind: int | None) -> dict[str, dict[str, Any]]:
+    """Per-player luck summary of one showdown hand, for the hand detail view:
+    luck chips, the street the money went in, the "top X%" strength there,
+    and (big losses only) why the pot was lost. Empty when unmeasurable."""
+    r = _hand_luck_cached(hand)
+    if not r:
+        return {}
+    bb = big_blind or 0
+    return {
+        p: {
+            "luck": round(v["luck"]),
+            "commit": v["commit"],
+            "pct": round(v["pct"], 3),
+            "kind": _big_loss_kind(hand, p, v, bb),
+        }
+        for p, v in r.items()
+    }
 
 
 _LUCK_CACHE: dict[str, dict[str, dict[str, Any]] | None] = {}
@@ -416,6 +545,117 @@ def _hand_luck_cached(hand: Hand) -> dict[str, dict[str, Any]] | None:
 # ---------------------------------------------------------------------------
 # the main entry point
 # ---------------------------------------------------------------------------
+
+EVOLUTION_STATS = [
+    # key, label, description
+    ("vpip", "VPIP", "Voluntarily put in pot"),
+    ("pfr", "PFR", "Preflop raise"),
+    ("three_bet", "3-Bet", "Re-raise vs a raise"),
+    ("af", "AF", "Aggression factor"),
+    ("cbet", "C-Bet", "Continuation bet"),
+    ("ftcb", "FtCB", "Fold to c-bet"),
+    ("wtsd", "WTSD", "Went to showdown"),
+    ("wwsf", "WWSF", "Won when saw flop"),
+]
+
+
+def _stat_values(ps: PlayerStats, wwsf_won: int) -> dict[str, float | None]:
+    def pct(n: int, d: int) -> float | None:
+        return round(100 * n / d, 1) if d else None
+
+    return {
+        "vpip": pct(ps.vpip_hands, ps.hands),
+        "pfr": pct(ps.pfr_hands, ps.hands),
+        "three_bet": pct(ps.three_bet_hands, ps.three_bet_opps),
+        "af": round(ps.bets_raises / ps.calls, 2) if ps.calls else None,
+        "cbet": pct(ps.cbets, ps.cbet_opps),
+        "ftcb": pct(ps.fold_to_cbets, ps.fold_to_cbet_opps),
+        "wtsd": pct(ps.wtsd, ps.saw_flop),
+        "wwsf": pct(wwsf_won, ps.saw_flop),
+    }
+
+
+def _evolution(hands: list[Hand], hero: str, max_points: int = 150) -> dict[str, Any] | None:
+    """Running values of the headline stats after each of the hero's hands,
+    plus the rest of the table pooled as a reference line."""
+    stats: dict[str, PlayerStats] = {}
+    wwsf: dict[str, int] = {}
+    rows: list[dict[str, float | None]] = []
+    for h in hands:
+        before = {p: ps.saw_flop for p, ps in stats.items()}
+        compute_hand_stats(h, stats)
+        for p, ps in stats.items():
+            if ps.saw_flop > before.get(p, 0) and h.net(p) > 0:
+                wwsf[p] = wwsf.get(p, 0) + 1
+        if hero in h.players and hero in stats:
+            rows.append(_stat_values(stats[hero], wwsf.get(hero, 0)))
+    if len(rows) >= 30:
+        rows = rows[10:]  # the first few hands are all noise (0% or 100%) and would squash the axis
+    if len(rows) < 2:
+        return None
+    others = [ps for p, ps in stats.items() if p != hero]
+    pooled = PlayerStats(player="table", name="table")
+    for ps in others:
+        for f in ("hands", "vpip_hands", "pfr_hands", "three_bet_opps", "three_bet_hands", "saw_flop", "wtsd",
+                  "bets_raises", "calls", "cbet_opps", "cbets", "fold_to_cbet_opps", "fold_to_cbets"):
+            setattr(pooled, f, getattr(pooled, f) + getattr(ps, f))
+    table = _stat_values(pooled, sum(v for p, v in wwsf.items() if p != hero))
+    if len(rows) > max_points:  # thin evenly, always keeping the last point
+        idx = [round(i * (len(rows) - 1) / (max_points - 1)) for i in range(max_points)]
+        rows = [rows[i] for i in idx]
+    return {
+        "n": len(rows),
+        "stats": [
+            {"key": k, "label": lab, "desc": desc, "series": [r[k] for r in rows], "value": rows[-1][k], "table": table[k]}
+            for k, lab, desc in EVOLUTION_STATS
+        ],
+    }
+
+
+def _highlights(hands: list[Hand], hero: str, bb: int, limit: int = 8, min_bb: float = 10) -> dict[str, list[dict[str, Any]]]:
+    """Gambit-style lists for the hero: showdowns won from behind, lost from
+    ahead, and lost with a hand nobody folds (coolers). Pots under ``min_bb``
+    are skipped; each list is the biggest pots first."""
+    lucky: list[dict[str, Any]] = []
+    beats: list[dict[str, Any]] = []
+    coolers: list[dict[str, Any]] = []
+    for h in hands:
+        if hero not in h.players:
+            continue
+        r = _hand_luck_cached(h)
+        if not r or hero not in r:
+            continue
+        me = r[hero]
+        net = h.net(hero)
+        if abs(net) < min_bb * bb:
+            continue
+        board = [c for c in (card_int(c) for c in h.board) if c is not None]
+
+        def row(p: str) -> dict[str, Any]:
+            hole = cards_int(h.known_cards.get(p)) or []
+            five, desc = best_five(hole + board)
+            return {"player": p, "cards": [card_str(c) for c in five], "hole": [card_str(c) for c in hole],
+                    "desc": desc, "won": r[p]["won"]}
+
+        entry = {
+            "number": h.number, "net": net, "net_bb": round(net / bb, 1) if bb else None, "commit": me["commit"],
+            "players": [row(hero)] + [row(p) for p in r if p != hero][:2],
+        }
+        eq = me["eq_commit"]
+        st = _street_phrase(me["commit"])
+        if me["won"] and net > 0 and not me["ahead"]:
+            entry["caption"] = f"Won as a {eq:.0%} underdog {st}"
+            lucky.append(entry)
+        elif not me["won"] and net < 0 and me["ahead"]:
+            entry["caption"] = f"Lost as a {eq:.0%} favourite {st}"
+            beats.append(entry)
+        elif not me["won"] and net < 0 and _is_cooler(me):
+            pct = me["pct"]
+            entry["caption"] = f"Your hand beat {100 * pct:.{1 if pct > 0.99 else 0}f}% of hands {st}"
+            coolers.append(entry)
+    pick = lambda xs: sorted(xs, key=lambda e: -abs(e["net"]))[:limit]  # noqa: E731
+    return {"got_lucky": pick(lucky), "bad_beats": pick(beats), "coolers": pick(coolers)}
+
 
 def compute_insights(session: Session, big_blind: int | None = None) -> dict[str, Any]:
     hands = session.hands
@@ -665,8 +905,10 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
                 "luck": 0.0,
                 "unmeasured_n": 0,
                 "unmeasured_net": 0,
-                "setup_n": 0,
-                "setup_chips": 0,
+                # showdowns lost for >= 40 bb, by why: outdrawn (ahead when
+                # the money went in), cooler (behind with a hand nobody
+                # folds) or other (behind with less than that)
+                "big_loss": {k: {"n": 0, "chips": 0} for k in ("outdrawn", "cooler", "other")},
                 "allin_n": 0,
                 "allin_luck": 0.0,
                 "net": 0,
@@ -699,12 +941,10 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
             if any_allin and any(x.player == p and x.all_in for x in h.actions):
                 a["allin_n"] += 1
                 a["allin_luck"] += r["luck"]
-            # a "setup": lost a big pot (>= 40 bb) holding a real hand when the
-            # money went in — the hit-by-a-train feeling, whether the chips
-            # count as bad luck (was ahead) or not (was behind a monster)
-            if not r["won"] and r["commit_hand"] and hbb(h) and h.net(p) <= -40 * hbb(h):
-                a["setup_n"] += 1
-                a["setup_chips"] += h.net(p)
+            kind = _big_loss_kind(h, p, r, hbb(h))
+            if kind:
+                a["big_loss"][kind]["n"] += 1
+                a["big_loss"][kind]["chips"] += h.net(p)
 
     for p, a in luck_acc.items():
         a["net"] = nets.get(p, 0)
@@ -728,4 +968,6 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
         "position_table": pos_table,
         "position_players": pos_players,
         "luck": luck_acc,
+        "evolution": _evolution(hands, hero) if hero else None,
+        "highlights": _highlights(hands, hero, bb) if hero else None,
     }

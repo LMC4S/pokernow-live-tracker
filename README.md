@@ -27,8 +27,10 @@ You can also drop the replayer's `poker-now-hands-game-<id>.json` or the log CSV
 
 **Insights**, all deterministic (exact runout enumeration postflop, fixed-seed Monte Carlo preflop):
 
+- *Your stats over the session*: VPIP, PFR, 3-bet, AF, c-bet, fold to c-bet, WTSD and won-when-saw-flop as running lines after each hand, with the rest of the table pooled as a dashed reference.
+- *Showdown highlights*: got lucky (won from behind), bad beats (ahead when the money went in, lost) and coolers (an overpair, two pair or better, or JJ+/AK that beat 85% of all hands at that point and still lost), each with both five-card hands and a one-line verdict. Click one to replay it.
 - *Luck as situations* (needs your hole cards): starting-hand strength, premium hands dealt, flop hits and flopped sets against their theoretical rates. Counted as frequencies, never chips.
-- *Luck as money* (all players): each flop, turn and river card priced as the change in equity times the pot at that moment, from cards shown at showdown. Sums to zero across the table. Luck-adjusted net and a setups count sit beside it.
+- *Luck as money* (all players): each flop, turn and river card priced as the change in equity times the pot at that moment, from cards shown at showdown. Sums to zero across the table. Luck-adjusted net sits beside it, with every big pot lost sorted into outdrawn, cooler or other. The replayer ends each showdown with a "top X% of hands" strength line per player.
 - *Position*: net in and out of position for every player who saw a flop.
 - *Your game*: whole-hand paid and received by starting-hand group and by flop made hand.
 

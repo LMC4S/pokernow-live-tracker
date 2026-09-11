@@ -24,7 +24,7 @@ import uuid
 from .aggregate import ME_ID, ME_NAME, Aggregate, Source, merge_sessions
 from .export import write_exports
 from .fetch import Credentials, FetchError, GameArchive, default_data_dir, parse_game_ref
-from .insights import compute_insights
+from .insights import compute_insights, hand_luck
 from .live import LiveRegistry
 from .models import ActionType, Session, Street
 from .parser import load_archive, parse_text
@@ -552,6 +552,7 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             if h.number == number:
                 d = h.to_dict()
                 d["big_blind"] = s.stats.big_blind
+                d["luck"] = hand_luck(h, s.stats.big_blind)
                 return d
         raise HTTPException(status_code=404, detail=f"hand #{number} not found")
 

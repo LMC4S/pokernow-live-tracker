@@ -16,6 +16,9 @@ from pokernow.insights import (
     eval7,
     hand_class,
     hand_group,
+    hand_luck,
+    hand_percentile,
+    _cooler_hand,
 )
 from pokernow.parser import parse_text
 
@@ -197,11 +200,11 @@ def test_compute_insights_end_to_end():
     assert alice["luck"] + bob["luck"] == 0  # luck is zero-sum when all survivors are known
     assert alice["allin_n"] == 1
     assert alice["adjusted_net"] == alice["net"] - alice["luck"]
-    # Alice lost 50 bb holding an overpair when the money went in — the classic
-    # "hit by a train" spot the setup counter exists for.
-    assert alice["setup_n"] == 1
-    assert alice["setup_chips"] == -500
-    assert bob["setup_n"] == 0
+    # Alice lost 50 bb as the favourite when the money went in: an outdraw,
+    # not a cooler.
+    assert alice["big_loss"]["outdrawn"] == {"n": 1, "chips": -500}
+    assert alice["big_loss"]["cooler"]["n"] == alice["big_loss"]["other"]["n"] == 0
+    assert all(v["n"] == 0 for v in bob["big_loss"].values())
 
     # whole-hand ledger by starting hand: AA played (strong) — paid 500 in
     # total, received 0, net -500; 72o dealt & folded (other)
@@ -285,3 +288,63 @@ def test_insights_without_hero_cards():
     assert alice["measured"] == 0
     assert alice["unmeasured_n"] == 1
     assert alice["unmeasured_net"] == -500
+
+
+def _cooler_json():
+    """Alice's middle set (TT on Q-T-5) stacks off into Bob's top set."""
+    t = 1710200000000
+    hand = {
+        "id": "c1", "handVersion": 2, "number": "1", "gameType": "th", "cents": False,
+        "smallBlind": 5, "bigBlind": 10, "ante": None, "straddleSeat": None, "dealerSeat": 1,
+        "startedAt": t, "bombPot": False, "doubleBoard": None,
+        "players": [dict(A, stack=500, hand=["Ts", "Tc"]), dict(B, stack=500)],
+        "events": [
+            _ev(t + 1, type=3, seat=1, value=5),
+            _ev(t + 2, type=2, seat=2, value=10),
+            _ev(t + 3, type=8, seat=1, value=30),
+            _ev(t + 4, type=7, seat=2, value=30),
+            _ev(t + 5, type=9, turn=1, run=1, cards=["Qh", "Td", "5c"]),
+            _ev(t + 6, type=1, seat=2, value=470, allIn=True),
+            _ev(t + 7, type=7, seat=1, value=470, allIn=True),
+            _ev(t + 8, type=9, turn=2, run=1, cards=["3d"]),
+            _ev(t + 9, type=9, turn=3, run=1, cards=["8s"]),
+            _ev(t + 10, type=15),
+            _ev(t + 11, type=12, seat=2, cards=["Qs", "Qc"]),
+            _ev(t + 12, type=10, pot=1000, seat=2, value=1000, cards=["Qs", "Qc"],
+                combination=["Qs", "Qc", "Qh", "Td", "Tc"], handDescription="Full House, Q Full of T",
+                position=2, runNumber="1", hiLo="h"),
+        ],
+    }
+    return json.dumps({"playerId": "aaa111", "gameId": "g2", "hands": [hand]})
+
+
+def test_set_under_set_is_a_cooler_not_bad_luck():
+    session = parse_text(_cooler_json(), source_name="cooler.json")
+    ins = compute_insights(session, big_blind=10)
+    alice = next(v for k, v in ins["luck"].items() if k.startswith("Alice"))
+    # the deck barely moved: she was behind from the flop on
+    assert -100 < alice["luck"] < 0
+    assert alice["big_loss"]["cooler"] == {"n": 1, "chips": -500}
+    assert alice["big_loss"]["outdrawn"]["n"] == alice["big_loss"]["other"]["n"] == 0
+
+    per_hand = hand_luck(session.hands[0], 10)
+    a = next(v for k, v in per_hand.items() if k.startswith("Alice"))
+    b = next(v for k, v in per_hand.items() if k.startswith("Bob"))
+    assert a["commit"] == b["commit"] == "flop"
+    assert a["kind"] == "cooler" and b["kind"] is None
+    # middle set beats everything but the three combos of QQ (Gambit's "top X%")
+    assert a["pct"] > 0.99 and b["pct"] == 1.0
+
+
+def test_hand_percentile():
+    # preflop: AA is the top of the deck, 72o near the bottom, ties split
+    assert hand_percentile(cs("As", "Ad"), []) > 0.99
+    assert hand_percentile(cs("7s", "2d"), []) < 0.05
+    # flop: top pair top kicker on a dry board beats nearly everything, an
+    # unpaired ace-high only the unpaired hands below it
+    board = cs("Kh", "7d", "2c")
+    assert hand_percentile(cs("Ad", "Kc"), board) > 0.9
+    assert 0.4 < hand_percentile(cs("Ad", "Qc"), board) < 0.7
+    # cooler-grade hands: overpair / two pair+ yes, bare top pair no
+    assert _cooler_hand(cs("Ad", "Ac"), board) and _cooler_hand(cs("Kd", "7c"), board)
+    assert not _cooler_hand(cs("Ad", "Kc"), board)

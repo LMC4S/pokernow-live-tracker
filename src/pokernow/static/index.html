@@ -141,6 +141,29 @@
   .flowrow { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-variant-numeric: tabular-nums; }
   .warn { background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; border-radius: 8px; padding: 8px 12px; margin: 10px 0; font-size: 12.5px; }
   @media (prefers-color-scheme: dark) { .warn { background: #2a1c0e; color: #fdba74; border-color: #7c2d12; } }
+  .evo { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin: 12px 0 20px; }
+  .evo .card { padding: 12px 14px 8px; }
+  .evo .hd { display: flex; justify-content: space-between; align-items: baseline; }
+  .evo .hd b { font-size: 15px; }
+  .evo .hd .v { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .evo .s { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .evo svg { width: 100%; height: 84px; display: block; overflow: visible; }
+  .evo .ax { fill: var(--muted); font-size: 10px; }
+  .hl { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; margin: 12px 0 20px; }
+  .hl h3 { margin: 0; font-size: 15px; }
+  .hl .sub { color: var(--muted); font-size: 12px; margin: 1px 0 8px; }
+  .hl-item { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px 8px; margin-bottom: 8px; cursor: pointer; }
+  .hl-item:hover { background: var(--hover); }
+  .hl-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; min-width: 0; }
+  .hl-row .who { width: 62px; flex: none; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hl-row .cards { flex: none; }
+  .hl-row .desc { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hl-row.lose .pcard { opacity: .4; }
+  .hl-row .pcard.hole { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+  .hl-row.lose .pcard.hole { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--muted); }
+  .hl-cap { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; margin-top: 6px; }
+  .hl-cap .net { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .hl-empty { color: var(--muted); font-size: 12.5px; padding: 6px 0; }
   a.open-help { color: var(--accent); cursor: pointer; text-decoration: underline; }
   dialog#help { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--ink); max-width: 680px; width: calc(100vw - 40px); padding: 20px 24px 18px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
   dialog#help::backdrop { background: rgba(0,0,0,.5); }
@@ -693,6 +716,53 @@
     if (state.tab === 'insights') loadInsights();
   }));
 
+  function evoCard(s) {
+    const isAf = s.key === 'af';
+    const fmtV = (v) => v == null ? '–' : isAf ? v.toFixed(2) : v.toFixed(1) + '%';
+    const fmtT = (v) => isAf ? v.toFixed(1) : Math.round(v) + '%';
+    const head = `<div class="hd"><b>${s.label}</b><span class="v">${fmtV(s.value)}</span></div><div class="s">${s.desc}${s.table != null ? ` · table ${fmtV(s.table)}` : ''}</div>`;
+    const pts = s.series.map((v, i) => [i, v]).filter(x => x[1] != null);
+    if (pts.length < 2) return `<div class="card">${head}<div class="hl-empty">Not enough hands yet.</div></div>`;
+    const W = 300, H = 84, L = 36, T = 6, B = 8;
+    const vals = pts.map(x => x[1]); if (s.table != null) vals.push(s.table);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (hi - lo < 1e-9) { hi += 1; lo = Math.max(0, lo - 1); }
+    const pad = (hi - lo) * 0.1; const top = hi, bot = lo; lo = Math.max(0, lo - pad); hi += pad;
+    const n = s.series.length;
+    const x = (i) => L + (n > 1 ? i / (n - 1) : 0) * (W - L - 6);
+    const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+    const line = pts.map(q => `${x(q[0]).toFixed(1)},${y(q[1]).toFixed(1)}`).join(' ');
+    const area = `${x(pts[0][0]).toFixed(1)},${H - B} ${line} ${x(pts[pts.length - 1][0]).toFixed(1)},${H - B}`;
+    const last = pts[pts.length - 1];
+    const ref = s.table != null ? `<line x1="${L}" x2="${W - 6}" y1="${y(s.table).toFixed(1)}" y2="${y(s.table).toFixed(1)}" stroke="var(--pos)" stroke-dasharray="4 3" stroke-width="1.2" opacity=".85"><title>rest of the table: ${fmtV(s.table)}</title></line>` : '';
+    const ax = [top, (top + bot) / 2, bot].map(v => `<text class="ax" x="${L - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end">${fmtT(v)}</text>`).join('');
+    return `<div class="card">${head}<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="${area}" fill="var(--accent)" opacity=".12"/>${ref}<polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/><circle cx="${x(last[0]).toFixed(1)}" cy="${y(last[1]).toFixed(1)}" r="3.5" fill="var(--accent)"/>${ax}</svg></div>`;
+  }
+
+  function hlColumn(items, title, sub, empty) {
+    const cardsHl = (cards, hole) => cards.map(c => cardHtml(c, 'lg').replace('class="pcard', hole.includes(c) ? 'class="pcard hole' : 'class="pcard')).join('');
+    const body = items.length ? items.map(e => `<div class="hl-item" data-jump="${e.number}" title="Replay hand #${e.number}">` +
+      e.players.map(p => `<div class="hl-row${p.won ? '' : ' lose'}"><span class="who" title="${esc(short(p.player))}">${esc(short(p.player))}</span><span class="cards">${cardsHl(p.cards, p.hole)}</span><span class="desc">${esc(p.desc)}</span></div>`).join('') +
+      `<div class="hl-cap"><span class="muted">${esc(e.caption)}</span><span class="net ${cls(e.net)}">${signed(e.net)}${e.net_bb != null ? ` <span class="muted">(${signed(e.net_bb)} bb)</span>` : ''}</span></div></div>`).join('')
+      : `<div class="hl-empty">${empty}</div>`;
+    return `<div><h3>${title}</h3><div class="sub">${sub}</div>${body}</div>`;
+  }
+
+  async function jumpToHand(n) {
+    const btn = document.querySelector('.tabs button[data-tab="overview"]'); if (btn) btn.click();
+    $('#f-player').value = ''; $('#f-minpot').value = ''; $('#f-showdown').checked = false; $('#f-involve').value = ''; state.filterPlayer = '';
+    if (typeof renderPlayers === 'function') renderPlayers();
+    state.handsSort = { key: 'number', dir: 1 };
+    await loadHands();
+    const idx = [...state.hands].sort((a, b) => a.number - b.number).findIndex(h => h.number === n);
+    if (idx < 0) return;
+    state.handsPage = Math.floor(idx / HANDS_PER_PAGE) + 1;
+    renderHands();
+    state.selectedHand = null;
+    await showHand(n);
+    const row = $('#hands tbody tr[data-n="' + n + '"]'); if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
   async function loadInsights() {
     if (!state.sid) return;
     const key = state.sid + ':' + (state.summary ? state.summary.hands : 0);
@@ -718,6 +788,21 @@
       Math.abs(z) < 1.96 ? `<span class="vpill vp-avg">${avg}</span>` : (z > 0 ? `<span class="vpill vp-hot">${hot}</span>` : `<span class="vpill vp-cold">${cold}</span>`);
     const pTxt = (p) => `p = ${p < 0.0001 ? '<0.0001' : p}`;
     let html = '';
+
+    // ---- stat evolution (hero) ----
+    const EV = d.evolution;
+    if (EV) {
+      html += `<section><h2>Your stats over the session <small>· ${esc(short(d.hero))} · running value after each of your hands · dashed line is the rest of the table pooled</small></h2><div class="evo">${EV.stats.map(evoCard).join('')}</div></section>`;
+    }
+    // ---- showdown highlights (hero) ----
+    const HL = d.highlights;
+    if (HL && (HL.got_lucky.length || HL.bad_beats.length || HL.coolers.length)) {
+      html += `<section><h2>Showdown highlights <small>· ${esc(short(d.hero))} · pots of 10 bb or more, biggest first · click a hand to replay it</small></h2><div class="hl">`
+        + hlColumn(HL.got_lucky, 'Got lucky', 'Won from behind', 'No showdown won from behind.')
+        + hlColumn(HL.bad_beats, 'Bad beats', 'Ahead when the money went in, lost', 'No showdown lost from ahead.')
+        + hlColumn(HL.coolers, 'Coolers', 'A hand nobody folds ran into a better one', 'No coolers.')
+        + `</div></section>`;
+    }
 
     // ---- luck · situations (frequency luck, hero only) + your game (stashed for later) ----
     let gameHtml = '';
@@ -762,10 +847,16 @@
 
     // ---- run-good meter ----
     const luckRows = Object.entries(d.luck || {}).sort((a, b2) => b2[1].luck - a[1].luck);
+    const bigLossCell = (BL) => {
+      const kinds = ['outdrawn', 'cooler', 'other'].filter(k => BL && BL[k] && BL[k].n);
+      if (!kinds.length) return '<span class="muted">–</span>';
+      const chips = kinds.reduce((t, k) => t + BL[k].chips, 0);
+      return `<span class="neg">${signed(chips)}</span>` + kinds.map(k => `<span class="tag" title="${signed(BL[k].chips)}">${BL[k].n} ${k}</span>`).join('');
+    };
     if (luckRows.length) {
-      html += `<section><h2>Luck · money <small>· card luck priced on chips already in the pot · all players · from cards shown at showdown</small></h2><div class="panel"><table><thead><tr><th>Player</th><th>Net</th><th>Measured SDs</th><th>Money luck</th><th>All-in hands (luck)</th><th>Setups</th><th>Luck-adj net</th></tr></thead><tbody>`;
-      html += luckRows.map(([p, a]) => `<tr class="${p === d.hero ? 'hero-row' : ''}"><td>${esc(short(p))}${p === d.hero ? ' <span class="tag">you</span>' : ''}</td><td class="${cls(a.net)}">${signed(a.net)}</td><td>${a.measured}</td><td class="${cls(a.luck)}" title="${a.luck_bb != null ? signed(a.luck_bb) + ' bb' : ''}">${signed(a.luck)}</td><td>${a.allin_n}${a.allin_n ? ` <span class="${cls(a.allin_luck)}">(${signed(a.allin_luck)})</span>` : ''}</td><td>${a.setup_n}${a.setup_n ? ` <span class="neg">(${signed(a.setup_chips)})</span>` : ''}</td><td class="${cls(a.adjusted_net)}">${signed(a.adjusted_net)}</td></tr>`).join('');
-      html += `</tbody></table></div><div class="ins-note">Money luck prices each flop, turn and river card as the change in equity times the pot at that moment, summed over the hand. Only money already in the pot counts, so a rivered draw after a small call scores little and the same river with the stacks in scores in full. It sums to zero across the table. Only showdowns where two or more hands were revealed are scored. Folds to scare cards and mucked hands are not, so Luck-adj net is net minus showdown luck and nothing else. Measured SDs is the number of scored showdowns. All-in hands is how many hands the player was all in, with the luck in those hands. Setups counts scored showdowns lost for 40 bb or more while holding top pair or better when the money went in, or JJ+ and AK preflop. It includes both outdraws and coolers. Outdraws are already inside money luck, so do not subtract setups from adjusted net. A large adjusted loss made mostly of setups means the player ran into hands. One with few setups means the losses came from other spots.</div></section>`;
+      html += `<section><h2>Luck · money <small>· card luck priced on chips already in the pot · all players · from cards shown at showdown</small></h2><div class="panel"><table><thead><tr><th>Player</th><th>Net</th><th>Measured SDs</th><th>Money luck</th><th>All-in hands (luck)</th><th>Big pots lost</th><th>Luck-adj net</th></tr></thead><tbody>`;
+      html += luckRows.map(([p, a]) => `<tr class="${p === d.hero ? 'hero-row' : ''}"><td>${esc(short(p))}${p === d.hero ? ' <span class="tag">you</span>' : ''}</td><td class="${cls(a.net)}">${signed(a.net)}</td><td>${a.measured}</td><td class="${cls(a.luck)}" title="${a.luck_bb != null ? signed(a.luck_bb) + ' bb' : ''}">${signed(a.luck)}</td><td>${a.allin_n}${a.allin_n ? ` <span class="${cls(a.allin_luck)}">(${signed(a.allin_luck)})</span>` : ''}</td><td>${bigLossCell(a.big_loss)}</td><td class="${cls(a.adjusted_net)}">${signed(a.adjusted_net)}</td></tr>`).join('');
+      html += `</tbody></table></div><div class="ins-note">Money luck prices each flop, turn and river card as the change in equity times the pot at that moment, summed over the hand. Only money already in the pot counts, so a rivered draw after a small call scores little and the same river with the stacks in scores in full. It sums to zero across the table. Only showdowns where two or more hands were revealed are scored. Folds to scare cards and mucked hands are not, so Luck-adj net is net minus showdown luck and nothing else. Measured SDs is the number of scored showdowns. All-in hands is how many hands the player was all in, with the luck in those hands. Big pots lost sorts every scored showdown lost for 40 bb or more by what happened. Outdrawn: the favourite when the money went in. Cooler: behind, but holding a hand nobody folds (an overpair, two pair or better, JJ+ or AK preflop) that beat at least 85% of all possible hands at that point. Other: behind with less than that. Outdraws are already inside money luck, so do not subtract them from adjusted net. A large adjusted loss made of coolers means the player ran into hands; one made of other means the chips went in behind with less.</div></section>`;
     }
     // ---- table-wide position ledger (needs no hole cards) ----
     const PT = d.position_table;
@@ -786,6 +877,7 @@
     html += gameHtml;
 
     $('#ins-root').innerHTML = html || '<div class="muted" style="padding:20px">Nothing to compute yet.</div>';
+    $('#ins-root').querySelectorAll('[data-jump]').forEach(el => el.addEventListener('click', () => jumpToHand(+el.dataset.jump)));
   }
 
   // ---------- hands ----------
@@ -989,6 +1081,11 @@
     let cap = rpDescribe(cur, stt);
     if (cur && cur.kind === 'end') {
       cap = Object.keys(stt.winners).map(w => `🏆 <b>${esc(short(w))}</b> +${num(stt.got[w])}${typeof stt.winners[w] === 'string' ? ` — ${esc(stt.winners[w])}` : ''}`).join(' · ') || 'Hand complete';
+      const streetPhrase = (st) => st === 'preflop' ? 'preflop' : `on the ${st}`;
+      const topPct = (pct) => { const t = 100 * (1 - pct); return `top ${t < 1 ? t.toFixed(1) : Math.round(t)}%`; };
+      const KIND = { outdrawn: 'outdrawn', cooler: 'cooler' };
+      const verdicts = Object.entries(h.luck || {}).map(([p, v]) => `<b>${esc(short(p))}</b> ${topPct(v.pct)} of hands ${streetPhrase(v.commit)} · luck <span class="${cls(v.luck)}">${signed(v.luck)}</span>${KIND[v.kind] ? ` <span class="tag">${KIND[v.kind]}</span>` : ''}`);
+      if (verdicts.length) cap += `<div class="muted" style="font-size:12px;margin-top:4px;font-weight:400">${verdicts.join(' &nbsp;·&nbsp; ')}</div>`;
     }
     document.getElementById('rp-caption').innerHTML = (cap || '<span class="muted">Press ▶ or Play to step through the hand</span>') + `<span class="stepno">${i + 1}/${steps.length}</span>`;
     const sl = document.getElementById('rp-slider'); if (sl) sl.value = i;

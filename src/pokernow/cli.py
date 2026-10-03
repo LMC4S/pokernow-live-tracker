@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("serve", help="Run the web UI / API")
     s.add_argument("--host", default="127.0.0.1")
-    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--port", type=int, default=int(os.environ.get("POKERNOW_PORT", 8517)))
     s.add_argument("--reload", action="store_true")
     s.add_argument("--open", action="store_true", help="Open the UI in the default browser")
     s.set_defaults(fn=cmd_serve)

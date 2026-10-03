@@ -14,7 +14,7 @@ macOS: double-click `PokerNow.command`. Elsewhere:
 
 ```bash
 uv venv && uv pip install -e ".[dev]"
-pokernow serve          # http://127.0.0.1:8000
+pokernow serve          # http://127.0.0.1:8517
 ```
 
 Paste a game link, then *Track live* while you play or *Fetch* afterwards. No login needed. Archives land in `data/<gameId>/` (raw hands, log and ledger, plus `stats.json`, `players.csv`, `hands.csv` and `summary.md`). PokerNow deletes hands after 5 days; the archive keeps them.
@@ -41,7 +41,7 @@ You can also drop the replayer's `poker-now-hands-game-<id>.json` or the log CSV
 ```bash
 pokernow fetch <url>    pokernow live <url>    pokernow stats <file-or-archive>
 pokernow hands <file-or-archive> --min-pot 500    pokernow hand <file-or-archive> 42
-pokernow export <file-or-archive>    pokernow serve --port 8000
+pokernow export <file-or-archive>    pokernow serve --port 8517
 ```
 
 API docs at `/docs`. From Python: `parse_file`, `compute_session_stats`, `compute_insights`.

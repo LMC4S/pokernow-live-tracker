@@ -9,7 +9,7 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-PORT="${POKERNOW_PORT:-8765}"
+PORT="${POKERNOW_PORT:-8517}"
 export POKERNOW_DATA_DIR="${POKERNOW_DATA_DIR:-$DIR/data}"
 mkdir -p "$POKERNOW_DATA_DIR"
 

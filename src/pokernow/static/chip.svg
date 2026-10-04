@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- drop shadow -->
+  <circle cx="512" cy="530" r="430" fill="#000" opacity="0.18"/>
+  <!-- chip body -->
+  <circle cx="512" cy="512" r="430" fill="#17613d"/>
+  <!-- edge inserts: 8 white stripes around the rim -->
+  <circle cx="512" cy="512" r="375" fill="none" stroke="#fff" stroke-width="110"
+          stroke-dasharray="140 154.5" stroke-dashoffset="70" transform="rotate(-90 512 512)"/>
+  <!-- inner face -->
+  <circle cx="512" cy="512" r="290" fill="#0f4a2c"/>
+  <circle cx="512" cy="512" r="262" fill="none" stroke="#fff" stroke-width="14"
+          stroke-dasharray="34 22"/>
+  <!-- spade -->
+  <path fill="#fff" d="M512 330
+    C 470 400 360 450 360 545
+    C 360 610 420 650 470 630
+    C 485 624 495 615 500 605
+    C 495 650 475 685 440 705
+    L 584 705
+    C 549 685 529 650 524 605
+    C 529 615 539 624 554 630
+    C 604 650 664 610 664 545
+    C 664 450 554 400 512 330 Z"/>
+</svg>

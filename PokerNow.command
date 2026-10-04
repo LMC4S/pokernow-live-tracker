@@ -9,6 +9,13 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+# give this launcher the chip icon (Finder icons live in xattrs, which git doesn't keep)
+if [ -f "$DIR/src/pokernow/static/chip.svg" ] && ! xattr "$0" 2>/dev/null | grep -q com.apple.ResourceFork; then
+  osascript -l JavaScript -e 'ObjC.import("AppKit");
+    $.NSWorkspace.sharedWorkspace.setIconForFileOptions(
+      $.NSImage.alloc.initWithContentsOfFile("'"$DIR"'/src/pokernow/static/chip.svg"), "'"$DIR/$(basename "$0")"'", 0)' >/dev/null 2>&1 || true
+fi
+
 PORT="${POKERNOW_PORT:-8517}"
 export POKERNOW_DATA_DIR="${POKERNOW_DATA_DIR:-$DIR/data}"
 mkdir -p "$POKERNOW_DATA_DIR"

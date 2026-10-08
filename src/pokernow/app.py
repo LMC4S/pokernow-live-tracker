@@ -24,7 +24,7 @@ import uuid
 from .aggregate import ME_ID, ME_NAME, Aggregate, Source, merge_sessions
 from .export import write_exports
 from .fetch import Credentials, FetchError, GameArchive, default_data_dir, parse_game_ref
-from .insights import compute_insights, hand_luck
+from .insights import compute_evolution, compute_insights, hand_luck
 from .live import LiveRegistry
 from .models import ActionType, Session, Street
 from .parser import load_archive, parse_text
@@ -569,6 +569,24 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             return cached[1]
         result = compute_insights(s.session, s.stats.big_blind)
         _insights_cache[sid] = (key, result)
+        return result
+
+    _trends_cache: dict[tuple[str, str], tuple[tuple[int, int], dict[str, Any]]] = {}
+
+    @app.get("/api/sessions/{sid}/trends")
+    def trends(sid: str, player: str | None = None) -> dict[str, Any]:
+        """Stat trends for one player (any player, hole cards not needed):
+        cumulative, rolling-window and fixed-block series plus net."""
+        s = store.get(sid)
+        who = player or s.session.hero
+        if not who or not any(who in h.players for h in s.session.hands):
+            raise HTTPException(status_code=404, detail="player not found in this session")
+        key = (len(s.session.hands), id(s.session))
+        cached = _trends_cache.get((sid, who))
+        if cached and cached[0] == key:
+            return cached[1]
+        result = {"player": who, "big_blind": s.stats.big_blind, "evolution": compute_evolution(s.session.hands, who)}
+        _trends_cache[(sid, who)] = (key, result)
         return result
 
     @app.get("/api/sessions/{sid}/events")

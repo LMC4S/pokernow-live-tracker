@@ -348,3 +348,37 @@ def test_hand_percentile():
     # cooler-grade hands: overpair / two pair+ yes, bare top pair no
     assert _cooler_hand(cs("Ad", "Ac"), board) and _cooler_hand(cs("Kd", "7c"), board)
     assert not _cooler_hand(cs("Ad", "Kc"), board)
+
+
+def test_evolution_window_matches_cumulative_when_unbounded():
+    from pokernow.insights import _evolution
+    from pokernow.models import Hand, SeatInfo, Action, Street, ActionType
+    from datetime import datetime, timedelta
+
+    hero, villain = "A @ a1", "B @ b1"
+    hands = []
+    for i in range(40):
+        h = Hand(number=i + 1, id=f"h{i}", game_type="NLH", dealer=hero, started_at=datetime(2026, 1, 1) + timedelta(minutes=i))
+        h.seats = [SeatInfo(seat=1, player=hero, stack=1000), SeatInfo(seat=2, player=villain, stack=1000)]
+        h.small_blind, h.big_blind = 10, 20
+        # hero raises every other hand, folds the rest
+        if i % 2 == 0:
+            h.actions = [Action(player=villain, type=ActionType.SMALL_BLIND, amount=10, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.BIG_BLIND, amount=20, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.RAISE, amount=60, street=Street.PREFLOP),
+                         Action(player=villain, type=ActionType.FOLD, street=Street.PREFLOP)]
+        else:
+            h.actions = [Action(player=hero, type=ActionType.SMALL_BLIND, amount=10, street=Street.PREFLOP),
+                         Action(player=villain, type=ActionType.BIG_BLIND, amount=20, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.FOLD, street=Street.PREFLOP)]
+        hands.append(h)
+
+    big = _evolution(hands, hero, window=10_000)
+    assert all(s["series"] == s["series_window"] for s in big["stats"])
+
+    small = _evolution(hands, hero, window=4)
+    assert small["window"] == 4
+    vpip = next(s for s in small["stats"] if s["key"] == "vpip")
+    # alternating raise/fold: any 4-hand window is exactly 50% VPIP
+    assert vpip["value_window"] == 50.0
+    assert len(vpip["series_window"]) == len(vpip["series"])

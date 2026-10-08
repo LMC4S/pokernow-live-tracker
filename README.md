@@ -27,14 +27,15 @@ You can also drop the replayer's `poker-now-hands-game-<id>.json` or the log CSV
 
 **Insights**, all deterministic (exact runout enumeration postflop, fixed-seed Monte Carlo preflop):
 
-- *Your stats over the session*: VPIP, PFR, 3-bet, AF, c-bet, fold to c-bet, WTSD and won-when-saw-flop as running lines after each hand, with the rest of the table pooled as a dashed reference.
 - *Showdown highlights*: got lucky (won from behind), bad beats (ahead when the money went in, lost) and coolers (an overpair, two pair or better, or JJ+/AK that beat 85% of all hands at that point and still lost), each with both five-card hands and a one-line verdict. Click one to replay it.
 - *Luck as situations* (needs your hole cards): starting-hand strength, premium hands dealt, flop hits and flopped sets against their theoretical rates. Counted as frequencies, never chips.
 - *Luck as money* (all players): each flop, turn and river card priced as the change in equity times the pot at that moment, from cards shown at showdown. Sums to zero across the table. Luck-adjusted net sits beside it, with every big pot lost sorted into outdrawn, cooler or other. The replayer ends each showdown with a "top X% of hands" strength line per player.
 - *Position*: net in and out of position for every player who saw a flop.
 - *Your game*: whole-hand paid and received by starting-hand group and by flop made hand.
 
-**All my sessions.** Names change every night and IDs change with devices, but you are always identifiable, so one button merges every archive and upload where your player ID appears into one session with the same Overview and Insights. Other players merge by ID too, with earlier names shown as aka. Mark an ID that changed with the **Same person** control; those groups live in `data/identities.json` and never leave your machine.
+**Trends**, for any player at the table, no hole cards needed. VPIP, PFR, 3-bet, AF, c-bet, fold to c-bet, WTSD and won-when-saw-flop over time, three ways: independent blocks of 50, 100 or 200 hands, a rolling 300-hand average, or the running average since the first hand. An overlay chart lays any of those under the net (per block as bars, or cumulative), with new sittings marked and dated. A stat-vs-profit scatter scores every stat against bb/100 per block with a correlation and a t-test, so a "my WTSD is costing me" hunch gets a number instead of a feeling.
+
+**All my sessions.** Names change every night and IDs change with devices, but you are always identifiable, so one button merges every archive and upload where your player ID appears into one session with the same Overview, Insights and Trends. Other players merge by ID too, with earlier names shown as aka. Mark an ID that changed with the **Same person** control; those groups live in `data/identities.json` and never leave your machine.
 
 ## CLI and API
 

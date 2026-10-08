@@ -33,7 +33,7 @@ You can also drop the replayer's `poker-now-hands-game-<id>.json` or the log CSV
 - *Position*: net in and out of position for every player who saw a flop.
 - *Your game*: whole-hand paid and received by starting-hand group and by flop made hand.
 
-**Trends**, for any player at the table, no hole cards needed. VPIP, PFR, 3-bet, AF, c-bet, fold to c-bet, WTSD and won-when-saw-flop over time, three ways: independent blocks of 50, 100 or 200 hands, a rolling 300-hand average, or the running average since the first hand. An overlay chart lays any of those under the net (per block as bars, or cumulative), with new sittings marked and dated. A stat-vs-profit scatter scores every stat against bb/100 per block with a correlation and a t-test, and a lead/lag table splits "how I played, then what happened" from "what happened, then how I played", because a same-block correlation cannot tell tilt from a leak.
+**Trends**, for any player at the table, no hole cards needed. VPIP, PFR, 3-bet, AF, c-bet, fold to c-bet, WTSD and won-when-saw-flop in independent blocks of 100 or 200 hands, with the rest of the table as a reference line, and an overlay that puts net per block as bars above any of those stats, with new sittings marked and dated. It shows where a change in play happened; it does not claim to say what caused it.
 
 **All my sessions.** Names change every night and IDs change with devices, but you are always identifiable, so one button merges every archive and upload where your player ID appears into one session with the same Overview, Insights and Trends. Other players merge by ID too, with earlier names shown as aka. Mark an ID that changed with the **Same person** control; those groups live in `data/identities.json` and never leave your machine.
 

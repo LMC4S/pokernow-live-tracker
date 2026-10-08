@@ -149,18 +149,7 @@
   .evo .s { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
   .evo svg { width: 100%; height: 84px; display: block; overflow: visible; }
   .evo .ax { fill: var(--muted); font-size: 10px; }
-  .evo-mode { float: right; display: inline-flex; gap: 4px; align-items: center; }
-  .evo-mode button { white-space: nowrap; }
-  .evo-mode button { font-size: 12px; padding: 3px 10px; font-weight: 500; background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; }
-  .evo-mode button.active { color: var(--accent); border-color: var(--accent); }
-  .evo-mode .evo-sizes { display: inline-flex; gap: 2px; margin: 0 6px 0 -2px; }
-  .evo-mode .evo-sizes button { padding: 3px 7px; border-radius: 6px; }
   .ov-card { padding: 12px 14px 10px; margin: 0 0 20px; border-radius: 3px; }
-  .sc-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-  .sc-row > div { min-width: 0; }
-  .sc-table { overflow-x: auto; }
-  .sc-table table { font-size: 12.5px; }
-  .sc-table .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
   .tr-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 14px 0 12px; }
   .tr-bar .seg { display: inline-flex; gap: 4px; align-items: center; }
   .tr-bar .seg button { font-size: 11.5px; padding: 4px 10px; font-weight: 500; background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; white-space: nowrap; letter-spacing: .3px; }
@@ -169,10 +158,6 @@
   .tr-bar .seg .evo-sizes button { padding: 4px 8px; }
   .tr-bar .tr-sub { color: var(--muted); font-size: 12px; }
   .tr-select { font-size: 13px; padding: 5px 8px; }
-  .sc-svg { width: 100%; height: auto; display: block; overflow: visible; }
-  .sc-svg .ax { fill: var(--muted); font-size: 10px; }
-  .sc-note { margin-top: 0; }
-  @media (max-width: 760px) { .sc-row { grid-template-columns: minmax(0, 1fr); } }
   .ov-card .hd { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .ov-card .hd b { font-size: 15px; }
   .ov-card .hd .s { color: var(--muted); font-size: 12px; }
@@ -363,7 +348,7 @@
 <script>
 (() => {
   const $ = (s) => document.querySelector(s);
-  const state = { sid: null, summary: null, gameId: null, hands: [], sort: { key: 'net', dir: -1 }, filterPlayer: '', selectedHand: null, liveVersion: 0, liveTimer: null, hero: null, handsSort: { key: 'number', dir: 1 }, replayHtml: null, rp: null, rpTimer: null, rpPeek: {}, tab: 'overview', insights: null, insightsFor: null, evoMode: 'blocks', evoBlock: 100, evoOverlay: ['vpip', 'wtsd'], evoScatter: 'wtsd', trends: null, trendsFor: null, trendsPlayer: null, aggregate: null, nArchives: 0, nUploads: 0, rpShowAll: (() => { try { return localStorage.getItem('rpShowAll') !== '0'; } catch { return true; } })() };
+  const state = { sid: null, summary: null, gameId: null, hands: [], sort: { key: 'net', dir: -1 }, filterPlayer: '', selectedHand: null, liveVersion: 0, liveTimer: null, hero: null, handsSort: { key: 'number', dir: 1 }, replayHtml: null, rp: null, rpTimer: null, rpPeek: {}, tab: 'overview', insights: null, insightsFor: null, evoBlock: 100, evoOverlay: ['vpip', 'wtsd'], trends: null, trendsFor: null, trendsPlayer: null, aggregate: null, nArchives: 0, nUploads: 0, rpShowAll: (() => { try { return localStorage.getItem('rpShowAll') !== '0'; } catch { return true; } })() };
   const DARK = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const COLORS = DARK
     ? ['#8fb0e0','#6f93b8','#9a9a9a','#5aa8a8','#c9a227','#c0605a','#9aa65a','#a98bc0','#b9cde6','#d0d0d0']
@@ -763,75 +748,57 @@
     if (state.tab === 'trends') loadTrends();
   }));
 
-  function evoCard(s) {
-    const series = evoSeries(state.trends.evolution, s) || s.series;
-    const blocks = state.evoMode === 'blocks' && series !== s.series;
-    const value = blocks ? series[series.length - 1] : state.evoMode === 'window' ? s.value_window : s.value;
+  function evoCard(s, B) {
+    const series = B.stats[s.key];
+    const value = series[series.length - 1];
     const isAf = s.key === 'af';
     const fmtV = (v) => v == null ? '–' : isAf ? v.toFixed(2) : v.toFixed(1) + '%';
     const fmtT = (v) => isAf ? v.toFixed(1) : Math.round(v) + '%';
     const head = `<div class="hd"><b>${s.label}</b><span class="v">${fmtV(value)}</span></div><div class="s">${s.desc}${s.table != null ? ` · table ${fmtV(s.table)}` : ''}</div>`;
     const pts = series.map((v, i) => [i, v]).filter(x => x[1] != null);
     if (pts.length < 2) return `<div class="card">${head}<div class="hl-empty">Not enough hands yet.</div></div>`;
-    const W = 300, H = 84, L = 36, T = 6, B = 8;
+    const W = 300, H = 84, L = 36, T = 6, Bm = 8;
     const vals = pts.map(x => x[1]); if (s.table != null) vals.push(s.table);
     let lo = Math.min(...vals), hi = Math.max(...vals);
     if (hi - lo < 1e-9) { hi += 1; lo = Math.max(0, lo - 1); }
     const pad = (hi - lo) * 0.1; const top = hi, bot = lo; lo = Math.max(0, lo - pad); hi += pad;
     const n = series.length;
-    const x = (i) => L + (n > 1 ? i / (n - 1) : 0) * (W - L - 6);
-    const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+    const x = (i) => L + (i + 0.5) / n * (W - L - 6);
+    const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - Bm);
     const line = pts.map(q => `${x(q[0]).toFixed(1)},${y(q[1]).toFixed(1)}`).join(' ');
-    const area = `${x(pts[0][0]).toFixed(1)},${H - B} ${line} ${x(pts[pts.length - 1][0]).toFixed(1)},${H - B}`;
-    const last = pts[pts.length - 1];
-    const dots = blocks ? pts.map(q => `<circle cx="${x(q[0]).toFixed(1)}" cy="${y(q[1]).toFixed(1)}" r="2.2" fill="var(--accent)"/>`).join('') : '';
-    const ref = s.table != null ? `<line x1="${L}" x2="${W - 6}" y1="${y(s.table).toFixed(1)}" y2="${y(s.table).toFixed(1)}" stroke="var(--pos)" stroke-dasharray="4 3" stroke-width="1.2" opacity=".85"><title>rest of the table: ${fmtV(s.table)}</title></line>` : '';
+    const ref = s.table != null ? `<line x1="${L}" x2="${W - 6}" y1="${y(s.table).toFixed(1)}" y2="${y(s.table).toFixed(1)}" stroke="var(--muted)" stroke-dasharray="4 3" stroke-width="1" opacity=".8"><title>rest of the table: ${fmtV(s.table)}</title></line>` : '';
+    const dots = pts.map(q => `<circle cx="${x(q[0]).toFixed(1)}" cy="${y(q[1]).toFixed(1)}" r="2.4" fill="var(--accent)"><title>hands ${B.hands[q[0]] - B.size + 1}–${B.hands[q[0]]}: ${fmtV(q[1])}</title></circle>`).join('');
     const ax = [top, (top + bot) / 2, bot].map(v => `<text class="ax" x="${L - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end">${fmtT(v)}</text>`).join('');
-    return `<div class="card">${head}<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="${area}" fill="var(--accent)" opacity=".12"/>${ref}<polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/><circle cx="${x(last[0]).toFixed(1)}" cy="${y(last[1]).toFixed(1)}" r="3.5" fill="var(--accent)"/>${dots}${ax}</svg></div>`;
+    return `<div class="card">${head}<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${ref}<polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${dots}${ax}</svg></div>`;
   }
 
-  function evoSeries(EV, s) {
-    // series for one stat under the current mode; null when the mode has no data
-    if (state.evoMode === 'blocks') { const B = EV.blocks[String(state.evoBlock)]; return B ? B.stats[s.key] : null; }
-    return state.evoMode === 'window' ? s.series_window : s.series;
-  }
-  function evoNet(EV) {
-    if (state.evoMode === 'blocks') { const B = EV.blocks[String(state.evoBlock)]; return B ? B.net : null; }
-    return state.evoMode === 'window' ? EV.net.series_window : EV.net.series;
-  }
   const TR_KEY = 'trendsPrefs';
   function loadTrendPrefs() {
     try {
       const p = JSON.parse(localStorage.getItem(TR_KEY) || 'null');
       if (p && typeof p === 'object') {
-        if (['blocks', 'window', 'cum'].includes(p.mode)) state.evoMode = p.mode;
-        if ([50, 100, 200].includes(p.block)) state.evoBlock = p.block;
+        if ([100, 200].includes(p.block)) state.evoBlock = p.block;
         if (Array.isArray(p.overlay)) state.evoOverlay = p.overlay.filter(k => typeof k === 'string');
-        if (typeof p.scatter === 'string') state.evoScatter = p.scatter;
-        state.evoBlockChosen = !!p.block;
       }
     } catch {}
   }
   function saveTrendPrefs() {
-    try { localStorage.setItem(TR_KEY, JSON.stringify({ mode: state.evoMode, block: state.evoBlockChosen ? state.evoBlock : null, overlay: state.evoOverlay, scatter: state.evoScatter })); } catch {}
+    try { localStorage.setItem(TR_KEY, JSON.stringify({ block: state.evoBlock, overlay: state.evoOverlay })); } catch {}
   }
   loadTrendPrefs();
   const OV_COLORS = DARK
     ? { vpip: '#8fb0e0', pfr: '#c9a227', three_bet: '#a98bc0', af: '#5aa8a8', cbet: '#9aa65a', ftcb: '#b9cde6', wtsd: '#c0605a', wwsf: '#9a9a9a' }
     : { vpip: '#5b7fa6', pfr: '#a67c00', three_bet: '#7a5b8c', af: '#2a7f7f', cbet: '#6b7a2e', ftcb: '#9ab7d9', wtsd: '#7a2e2e', wwsf: '#8c8c8c' };
-  function evoOverlay(EV) {
-    const win = state.evoMode === 'window', blocks = state.evoMode === 'blocks';
-    const net = evoNet(EV);
-    if (!net) return '';
-    const B = blocks ? EV.blocks[String(state.evoBlock)] : null;
+  function evoOverlay(EV, B) {
+    const net = B.net;
     const sel = EV.stats.filter(s => state.evoOverlay.includes(s.key));
     const pctSel = sel.filter(s => s.key !== 'af'), afSel = sel.find(s => s.key === 'af');
     const n = net.length;
     const W = 900, L = 44, R = 12, GAP = 14, HN = 120, HP = pctSel.length ? 150 : 0, HA = afSel ? 70 : 0;
-    const hasBrk = ((blocks ? B.breaks : EV.breaks) || []).length > 0;
+    const hasBrk = (B.breaks || []).length > 0;
     const STRIP = hasBrk ? 16 : 0;
     const H = 8 + STRIP + HN + (HP ? GAP + HP : 0) + (HA ? GAP + HA : 0) + 18;
-    const x = blocks ? (i) => L + (i + 0.5) / n * (W - L - R) : (i) => L + (n > 1 ? i / (n - 1) : 0) * (W - L - R);
+    const x = (i) => L + (i + 0.5) / n * (W - L - R);
     const chips = EV.stats.map(s => `<button data-ov="${s.key}" class="ov-chip ${state.evoOverlay.includes(s.key) ? 'on' : ''}" style="--c:${OV_COLORS[s.key]}"><i></i>${s.label}</button>`).join('');
     const panel = (top, h, series, fmt, zero) => {
       const vals = series.flatMap(sr => sr.pts.filter(v => v != null));
@@ -859,112 +826,49 @@
       return { svg: g, y };
     };
     const yN = 8 + STRIP;
-    const pN = panel(yN, HN, blocks ? [{ pts: net, bars: true }] : [{ pts: net, color: 'var(--accent)', area: true }], v => Math.round(v) + ' bb', true);
+    const pN = panel(yN, HN, [{ pts: net, bars: true }], v => Math.round(v) + ' bb', true);
     let svg = pN.svg;
-    if (blocks) {  // ghost of the cumulative level, scaled to its own range, so the slope reads against the bars
+    {  // ghost of the cumulative level, scaled to its own range, so the slope reads against the bars
       let c = 0; const cum = net.map(v => (c += v));
       const lo = Math.min(0, ...cum), hi = Math.max(0, ...cum);
       const yc = (v) => yN + (1 - (v - lo) / ((hi - lo) || 1)) * HN;
       svg += `<polyline points="${cum.map((v, i) => `${x(i).toFixed(1)},${yc(v).toFixed(1)}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="3 3" opacity=".7" vector-effect="non-scaling-stroke"/>`;
     }
     const yP = yN + HN + GAP;
-    const pP = HP ? panel(yP, HP, pctSel.map(s => ({ pts: evoSeries(EV, s), color: OV_COLORS[s.key], dots: blocks })), v => Math.round(v) + '%') : null;
+    const pP = HP ? panel(yP, HP, pctSel.map(s => ({ pts: B.stats[s.key], color: OV_COLORS[s.key], dots: true })), v => Math.round(v) + '%') : null;
     if (pP) svg += pP.svg;
     const yA = yP + (HP ? HP + GAP : 0);
-    const pA = HA ? panel(yA, HA, [{ pts: evoSeries(EV, afSel), color: OV_COLORS.af, dots: blocks }], v => v.toFixed(1)) : null;
+    const pA = HA ? panel(yA, HA, [{ pts: B.stats.af, color: OV_COLORS.af, dots: true }], v => v.toFixed(1)) : null;
     if (pA) svg += pA.svg;
     const bottom = yA + HA;
-    const brk = (blocks ? B.breaks : EV.breaks) || [], brkLab = (blocks ? B.break_labels : EV.break_labels) || [];
+    const brk = B.breaks || [], brkLab = B.break_labels || [];
     svg += brk.map(b => `<line x1="${x(b).toFixed(1)}" x2="${x(b).toFixed(1)}" y1="${yN}" y2="${bottom}" stroke="var(--muted)" stroke-dasharray="2 4" opacity=".7"/>`).join('');
     // date labels on the breaks, thinned so they never overlap (≈34px per label)
     let lastLx = -1e9;
     brk.forEach((b, i) => { const lx = x(b); if (lx - lastLx >= 36 && lx <= W - R - 30) { svg += `<text class="ax" x="${(lx + 2).toFixed(1)}" y="${yN - 5}">${esc(brkLab[i] || '')}</text>`; lastLx = lx; } });
     // hand-count ticks along the bottom
-    const total = EV.hands, handAt = blocks ? (i) => B.hands[i] : (i) => Math.round(total - (n - 1 - i) / (n - 1) * (total - 1));
+    const handAt = (i) => B.hands[i];
     const ticks = [0, Math.round((n - 1) / 4), Math.round((n - 1) / 2), Math.round(3 * (n - 1) / 4), n - 1].filter((v, i, a) => a.indexOf(v) === i);
-    svg += ticks.map((i, j) => `<text class="ax" x="${x(i).toFixed(1)}" y="${bottom + 14}" text-anchor="${j === 0 ? 'start' : j === ticks.length - 1 ? 'end' : 'middle'}">${blocks ? `${handAt(i) - state.evoBlock + 1}–${handAt(i)}` : `hand ${handAt(i)}`}</text>`).join('');
+    svg += ticks.map((i, j) => `<text class="ax" x="${x(i).toFixed(1)}" y="${bottom + 14}" text-anchor="${j === 0 ? 'start' : j === ticks.length - 1 ? 'end' : 'middle'}">${handAt(i) - B.size + 1}–${handAt(i)}</text>`).join('');
     svg += `<g class="ov-cursor" style="display:none"><line y1="${yN}" y2="${bottom}" stroke="var(--ink)" opacity=".5"/></g><rect class="ov-hit" x="${L}" y="${yN}" width="${W - L - R}" height="${bottom - yN}" fill="transparent"/>`;
-    const title = blocks ? `Net per block of ${state.evoBlock} hands (bb) · dashed line is the cumulative level` : win ? `Net over the last ${EV.window} hands (bb)` : 'Cumulative net (bb)';
-    return `<div class="card ov-card" data-n="${n}" data-l="${L}" data-w="${W}" data-r="${R}" data-band="${blocks ? 1 : 0}"><div class="hd"><b>Overlay</b><span class="s">${title} on top · pick the stats to lay underneath · dotted verticals are new sittings · hover to read values</span></div><div class="ov-chips">${chips}</div><div class="ov-wrap"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${svg}</svg><div class="ov-tip" style="display:none"></div></div></div>`;
-  }
-  function evoScatter(EV) {
-    const sizes = Object.keys(EV.blocks || {});
-    if (!sizes.length) return '';
-    const size = EV.blocks[String(state.evoBlock)] ? state.evoBlock : +sizes[0];
-    const B = EV.blocks[String(size)];
-    const stat = EV.stats.find(s => s.key === state.evoScatter) || EV.stats[0];
-    const isAf = stat.key === 'af';
-    const pts = B.stats[stat.key].map((v, i) => [v, B.net[i] / size * 100, i]).filter(q => q[0] != null);
-    const chips = EV.stats.map(s => `<button data-sc="${s.key}" class="ov-chip ${s.key === stat.key ? 'on' : ''}" style="--c:${OV_COLORS[s.key]}"><i></i>${s.label}</button>`).join('');
-    const TCRIT = { 1: 12.71, 2: 4.30, 3: 3.18, 4: 2.78, 5: 2.57, 6: 2.45, 7: 2.36, 8: 2.31, 9: 2.26, 10: 2.23, 12: 2.18, 15: 2.13, 20: 2.09, 30: 2.04 };
-    const corr = (xsIn, ysIn) => {
-      const q = xsIn.map((v, i) => [v, ysIn[i]]).filter(z => z[0] != null), m2 = q.length;
-      if (m2 < 3) return { m: m2, r: 0, sig: false, hi: null, lo: null };
-      const mx2 = q.reduce((t, z) => t + z[0], 0) / m2, my2 = q.reduce((t, z) => t + z[1], 0) / m2;
-      let a = 0, b2 = 0, c = 0; for (const [u, v] of q) { a += (u - mx2) ** 2; b2 += (v - my2) ** 2; c += (u - mx2) * (v - my2); }
-      const r2 = a && b2 ? c / Math.sqrt(a * b2) : 0, df2 = m2 - 2;
-      const tc = TCRIT[df2] || (df2 < 12 ? 2.2 : df2 < 15 ? 2.15 : df2 < 20 ? 2.1 : df2 < 30 ? 2.05 : 1.96);
-      const t2 = Math.abs(r2) * Math.sqrt(df2 / Math.max(1e-9, 1 - r2 * r2));
-      const srt = [...q].sort((u, v) => u[0] - v[0]), h2 = Math.floor(m2 / 2);
-      const mean = (arr) => arr.reduce((t, z) => t + z[1], 0) / arr.length;
-      return { m: m2, r: r2, sig: m2 >= 6 && t2 > tc, hi: mean(srt.slice(m2 - h2)), lo: mean(srt.slice(0, h2)) };
-    };
-    const y100 = B.net.map(v => v / size * 100);
-    const nb = y100.length;
-    const table = EV.stats.map(s => {
-      const st = B.stats[s.key];
-      return {
-        s,
-        same: corr(st, y100),
-        lead: corr(st.slice(0, nb - 1), y100.slice(1)),      // this block's play -> next block's profit
-        lag: corr(y100.slice(0, nb - 1), st.slice(1)),       // this block's profit -> next block's play
-      };
-    }).sort((a, b2) => Math.abs(b2.same.r) - Math.abs(a.same.r));
-    const rc = (c) => `<td class="${c.sig ? (c.r > 0 ? 'pos' : 'neg') : 'muted'}">${c.r.toFixed(2)}${c.sig ? ' •' : ''}</td>`;
-    const tableHtml = `<div class="panel sc-table"><table><thead><tr><th>Stat</th><th title="same block">Same block</th><th title="stat in block t vs profit in block t+1">Stat → next profit</th><th title="profit in block t vs stat in block t+1">Profit → next stat</th></tr></thead><tbody>` + table.map(({ s, same, lead, lag }) =>
-      `<tr class="${s.key === stat.key ? 'hero-row' : ''}"><td><span class="dot" style="background:${OV_COLORS[s.key]}"></span>${s.label}</td>${rc(same)}${rc(lead)}${rc(lag)}</tr>`).join('') + `</tbody></table></div>`;
-    if (pts.length < 4) return `<div class="card ov-card"><div class="hd"><b>Stat vs profit</b><span class="s">needs at least 4 blocks</span></div><div class="ov-chips">${chips}</div></div>`;
-    const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), m = pts.length;
-    const mx = xs.reduce((a, b2) => a + b2, 0) / m, my = ys.reduce((a, b2) => a + b2, 0) / m;
-    let sxx = 0, syy = 0, sxy = 0;
-    for (const [a, b2] of pts) { sxx += (a - mx) ** 2; syy += (b2 - my) ** 2; sxy += (a - mx) * (b2 - my); }
-    const r = sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0, slope = sxx ? sxy / sxx : 0;
-    const sorted = [...pts].sort((a, b2) => a[0] - b2[0]), half = Math.floor(m / 2);
-    const lowH = sorted.slice(0, half), highH = sorted.slice(m - half);
-    const avg = (arr) => arr.reduce((t, q) => t + q[1], 0) / arr.length;
-    const lo = Math.min(...xs), hi = Math.max(...xs), ylo = Math.min(0, ...ys), yhi = Math.max(0, ...ys);
-    const W = 420, H = 230, L = 46, R = 10, T = 10, Bm = 26;
-    const px = (v) => L + (hi > lo ? (v - lo) / (hi - lo) : 0.5) * (W - L - R);
-    const py = (v) => T + (1 - (v - ylo) / ((yhi - ylo) || 1)) * (H - T - Bm);
-    const fx = (v) => isAf ? v.toFixed(1) : Math.round(v) + '%';
-    let g = `<line x1="${L}" x2="${W - R}" y1="${py(0).toFixed(1)}" y2="${py(0).toFixed(1)}" stroke="var(--muted)" stroke-dasharray="3 3" opacity=".6"/>`;
-    g += `<line x1="${px(lo).toFixed(1)}" x2="${px(hi).toFixed(1)}" y1="${py(my + slope * (lo - mx)).toFixed(1)}" y2="${py(my + slope * (hi - mx)).toFixed(1)}" stroke="${OV_COLORS[stat.key]}" stroke-width="1.5" opacity=".8"/>`;
-    g += pts.map(q => `<circle cx="${px(q[0]).toFixed(1)}" cy="${py(q[1]).toFixed(1)}" r="4" fill="${q[1] >= 0 ? 'var(--pos)' : 'var(--neg)'}" opacity=".85"><title>hands ${B.hands[q[2]] - size + 1}–${B.hands[q[2]]}: ${stat.label} ${fx(q[0])}, ${signed(q[1].toFixed(0))} bb/100</title></circle>`).join('');
-    g += [lo, (lo + hi) / 2, hi].map(v => `<text class="ax" x="${px(v).toFixed(1)}" y="${H - 8}" text-anchor="middle">${fx(v)}</text>`).join('');
-    g += [yhi, (yhi + ylo) / 2, ylo].map(v => `<text class="ax" x="${L - 6}" y="${(py(v) + 3.5).toFixed(1)}" text-anchor="end">${Math.round(v)}</text>`).join('');
-    const df = m - 2, tcrit = TCRIT[df] || (df < 12 ? 2.2 : df < 15 ? 2.15 : df < 20 ? 2.1 : df < 30 ? 2.05 : 1.96);
-    const t = Math.abs(r) * Math.sqrt(df / Math.max(1e-9, 1 - r * r));
-    const sig = m >= 6 && t > tcrit;
-    const strength = m < 6 ? 'too few blocks to judge' : !sig ? 'nothing you can separate from noise' : Math.abs(r) < 0.4 ? 'a weak but real link' : 'a clear link';
-    const note = `r = ${r.toFixed(2)} over ${m} blocks of ${size} hands: ${strength}. Blocks where ${stat.label} was in the top half averaged <b class="${cls(avg(highH))}">${signed(avg(highH).toFixed(0))} bb/100</b>, bottom half <b class="${cls(avg(lowH))}">${signed(avg(lowH).toFixed(0))} bb/100</b>. Each point is one block; the per-block net has a standard deviation of roughly ${Math.round(Math.sqrt(syy / m))} bb/100 here, so a real effect has to be big to show.`;
-    return `<div class="card ov-card"><div class="hd"><b>Stat vs profit</b><span class="s">each dot is one block of ${size} hands · x = the stat in that block · y = net bb/100 in that block · line is the least-squares fit</span></div><div class="ov-chips">${chips}</div><div class="sc-row"><div><svg viewBox="0 0 ${W} ${H}" class="sc-svg">${g}</svg><div class="ins-note sc-note">${note}</div></div><div>${tableHtml}<div class="ins-note sc-note">Correlations over blocks; • marks one that clears a two-sided t-test at 5%. <b>Same block</b> cannot tell cause from effect: losing can change how you play just as easily as play changes results, and WTSD and WWSF partly <i>are</i> the result. The two lagged columns separate the directions in time. <b>Stat → next profit</b>: how you played in one block against what happened in the next, the closest thing here to "this habit costs money". <b>Profit → next stat</b>: what happened in one block against how you played in the next, which is tilt or loosening after a loss if the sign is negative for VPIP. With ${nb} blocks, expect one spurious • in a table this size.</div></div></div></div>`;
+    const title = `Net per block of ${B.size} hands (bb) · dashed line is the cumulative level`;
+    return `<div class="card ov-card" data-n="${n}" data-l="${L}" data-w="${W}" data-r="${R}"><div class="hd"><b>Overlay</b><span class="s">${title} on top · pick the stats to lay underneath · dotted verticals are new sittings · hover to read values</span></div><div class="ov-chips">${chips}</div><div class="ov-wrap"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${svg}</svg><div class="ov-tip" style="display:none"></div></div></div>`;
   }
   function bindOverlayHover() {
     const card = $('#tr-root .ov-card'); if (!card) return;
-    const EV = state.trends.evolution, blocks = state.evoMode === 'blocks';
+    const EV = state.trends.evolution, B = EV.blocks[String(state.evoBlock)];
     const svg = card.querySelector('svg'), cur = svg.querySelector('.ov-cursor line'), tip = card.querySelector('.ov-tip');
-    const n = +card.dataset.n, L = +card.dataset.l, W = +card.dataset.w, R = +card.dataset.r, band = card.dataset.band === '1';
-    const net = evoNet(EV);
-    const B = blocks ? EV.blocks[String(state.evoBlock)] : null;
+    const n = +card.dataset.n, L = +card.dataset.l, W = +card.dataset.w, R = +card.dataset.r;
+    const net = B.net;
     const sel = EV.stats.filter(s => state.evoOverlay.includes(s.key));
     svg.addEventListener('mousemove', (e) => {
       const rect = svg.getBoundingClientRect();
       const px = (e.clientX - rect.left) / rect.width * W;
-      const i = band ? Math.max(0, Math.min(n - 1, Math.floor((px - L) / (W - L - R) * n))) : Math.max(0, Math.min(n - 1, Math.round((px - L) / (W - L - R) * (n - 1))));
-      const xv = band ? L + (i + 0.5) / n * (W - L - R) : L + (n > 1 ? i / (n - 1) : 0) * (W - L - R);
+      const i = Math.max(0, Math.min(n - 1, Math.floor((px - L) / (W - L - R) * n)));
+      const xv = L + (i + 0.5) / n * (W - L - R);
       cur.parentNode.style.display = ''; cur.setAttribute('x1', xv); cur.setAttribute('x2', xv);
-      const rowsT = [`<div><span style="color:var(--accent)">■</span> ${blocks ? `hands ${B.hands[i] - state.evoBlock + 1}–${B.hands[i]} · net` : 'net'} <b class="${cls(net[i])}">${signed(net[i].toFixed(0))} bb</b>${blocks ? ` <span class="muted">(${signed((net[i] / state.evoBlock * 100).toFixed(0))} bb/100)</span>` : ''}</div>`]
-        .concat(sel.map(s => { const v = evoSeries(EV, s)[i]; return `<div><span style="color:${OV_COLORS[s.key]}">■</span> ${s.label} <b>${v == null ? '–' : s.key === 'af' ? v.toFixed(2) : v.toFixed(1) + '%'}</b></div>`; }));
+      const rowsT = [`<div><span style="color:var(--accent)">■</span> hands ${B.hands[i] - B.size + 1}–${B.hands[i]} · net <b class="${cls(net[i])}">${signed(net[i].toFixed(0))} bb</b> <span class="muted">(${signed((net[i] / B.size * 100).toFixed(0))} bb/100)</span></div>`]
+        .concat(sel.map(s => { const v = B.stats[s.key][i]; return `<div><span style="color:${OV_COLORS[s.key]}">■</span> ${s.label} <b>${v == null ? '–' : s.key === 'af' ? v.toFixed(2) : v.toFixed(1) + '%'}</b></div>`; }));
       tip.innerHTML = rowsT.join('');
       tip.style.display = '';
       const left = (e.clientX - rect.left); tip.style.left = (left > rect.width * 0.6 ? left - tip.offsetWidth - 12 : left + 12) + 'px';
@@ -1021,29 +925,21 @@
     const sel = `<select id="tr-player" class="tr-select">${players.map(p => `<option value="${esc(p.player)}" ${p.player === d.player ? 'selected' : ''}>${esc(p.name)}${p.player === state.hero ? ' (you)' : ''} · ${p.hands} hands</option>`).join('')}</select>`;
     let html = '';
     if (!EV) {
-      html = `<section><div class="tr-bar">${sel}</div><div class="muted" style="padding:20px">Not enough hands for a trend yet.</div></section>`;
+      html = `<section><div class="tr-bar">${sel}</div><div class="muted" style="padding:20px">Fewer than 200 hands: not enough for a trend.</div></section>`;
     } else {
-      const sizes = Object.keys(EV.blocks || {}).map(Number).sort((a, b2) => a - b2);
-      if (!state.evoBlockChosen) {  // 100 by default; drop to 50 only when 100 gives too few points
-        const n100 = EV.blocks['100'] ? EV.blocks['100'].n : 0;
-        state.evoBlock = n100 >= 6 || !EV.blocks['50'] ? (EV.blocks['100'] ? 100 : (sizes[0] || 100)) : 50;
-      }
-      if (state.evoMode === 'blocks' && !EV.blocks[String(state.evoBlock)]) { state.evoMode = sizes.length ? 'blocks' : 'window'; state.evoBlock = sizes[0] || 100; }
-      const m = state.evoMode;
-      const sub = m === 'blocks' ? `one independent point per ${state.evoBlock} hands` : m === 'window' ? `each point averages the previous ${EV.window} hands` : 'running average since the first hand';
-      const mb = (k, lab) => `<button data-evo="${k}" class="${m === k ? 'active' : ''}">${lab}</button>`;
-      const sb = sizes.map(z => `<button data-evoblock="${z}" class="${m === 'blocks' && state.evoBlock === z ? 'active' : ''}" title="${EV.blocks[String(z)].n} blocks">${z}</button>`).join('');
-      html = `<section><div class="tr-bar">${sel}<span class="seg">${sizes.length ? mb('blocks', 'Blocks of') + `<span class="evo-sizes">${sb}</span>` : ''}${mb('window', `Rolling ${EV.window}`)}${mb('cum', 'Cumulative')}</span><span class="tr-sub">${EV.hands} hands · ${sub} · dashed line is the rest of the table pooled</span></div>`
-        + `<div class="evo">${EV.stats.map(evoCard).join('')}</div>${evoOverlay(EV)}${evoScatter(EV)}</section>`;
-      html += `<div class="ins-note">Blocks cut the player's hands into fixed-size chunks and score each on its own, so every point is independent and a change shows up where it happened. Rolling averages the last ${EV.window} hands at each point: smoother, but a turn shows up late. Cumulative is the running average since the first hand and mostly tells you where the numbers settle. With 100-hand blocks, VPIP and WTSD carry a sampling error of about 5 points and net about 250 bb per block, so read single points with care.</div>`;
+      const sizes = Object.keys(EV.blocks).map(Number).sort((a, b2) => a - b2);
+      if (!EV.blocks[String(state.evoBlock)]) state.evoBlock = sizes[0];
+      const B = EV.blocks[String(state.evoBlock)];
+      const sb = sizes.map(z => `<button data-evoblock="${z}" class="${state.evoBlock === z ? 'active' : ''}" title="${EV.blocks[String(z)].n} blocks">${z}</button>`).join('');
+      html = `<section><div class="tr-bar">${sel}<span class="seg"><span class="tr-sub">Blocks of</span>${sb}</span><span class="tr-sub">${EV.hands} hands · ${B.n} independent blocks · dashed line is the rest of the table pooled</span></div>`
+        + `<div class="evo">${EV.stats.map(s => evoCard(s, B)).join('')}</div>${evoOverlay(EV, B)}</section>`;
+      html += `<div class="ins-note">Each point is one block of ${B.size} of the player's hands scored on its own, so a change shows where it happened. At ${B.size} hands VPIP and WTSD carry a sampling error of about ${B.size >= 200 ? 3.5 : 5} points and net about ${B.size >= 200 ? 175 : 250} bb per block, so read single points with care and look for runs.</div>`;
     }
     const root = $('#tr-root');
     root.innerHTML = html;
     const ps = root.querySelector('#tr-player'); if (ps) ps.addEventListener('change', () => { state.trendsPlayer = ps.value; loadTrends(); });
     const rerender = () => { saveTrendPrefs(); renderTrends(); };
-    root.querySelectorAll('[data-evo]').forEach(el => el.addEventListener('click', () => { state.evoMode = el.dataset.evo; rerender(); }));
-    root.querySelectorAll('[data-evoblock]').forEach(el => el.addEventListener('click', () => { state.evoMode = 'blocks'; state.evoBlock = +el.dataset.evoblock; state.evoBlockChosen = true; rerender(); }));
-    root.querySelectorAll('[data-sc]').forEach(el => el.addEventListener('click', () => { state.evoScatter = el.dataset.sc; rerender(); }));
+    root.querySelectorAll('[data-evoblock]').forEach(el => el.addEventListener('click', () => { state.evoBlock = +el.dataset.evoblock; rerender(); }));
     root.querySelectorAll('[data-ov]').forEach(el => el.addEventListener('click', () => {
       const k = el.dataset.ov, i = state.evoOverlay.indexOf(k);
       if (i >= 0) state.evoOverlay.splice(i, 1); else state.evoOverlay.push(k);

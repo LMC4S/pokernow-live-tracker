@@ -350,35 +350,39 @@ def test_hand_percentile():
     assert not _cooler_hand(cs("Ad", "Kc"), board)
 
 
-def test_evolution_window_matches_cumulative_when_unbounded():
-    from pokernow.insights import _evolution
+def test_evolution_blocks():
+    from pokernow.insights import compute_evolution
     from pokernow.models import Hand, SeatInfo, Action, Street, ActionType
     from datetime import datetime, timedelta
 
     hero, villain = "A @ a1", "B @ b1"
     hands = []
-    for i in range(40):
-        h = Hand(number=i + 1, id=f"h{i}", game_type="NLH", dealer=hero, started_at=datetime(2026, 1, 1) + timedelta(minutes=i))
+    for i in range(250):
+        # a 4-hour gap before hand 200 starts a new sitting
+        at = datetime(2026, 1, 1) + timedelta(minutes=i) + (timedelta(hours=4) if i >= 200 else timedelta())
+        h = Hand(number=i + 1, id=f"h{i}", game_type="NLH", dealer=hero, started_at=at)
         h.seats = [SeatInfo(seat=1, player=hero, stack=1000), SeatInfo(seat=2, player=villain, stack=1000)]
         h.small_blind, h.big_blind = 10, 20
-        # hero raises every other hand, folds the rest
-        if i % 2 == 0:
+        if i % 2 == 0:  # hero raises every other hand and takes the blinds, folds the rest
             h.actions = [Action(player=villain, type=ActionType.SMALL_BLIND, amount=10, street=Street.PREFLOP),
                          Action(player=hero, type=ActionType.BIG_BLIND, amount=20, street=Street.PREFLOP),
                          Action(player=hero, type=ActionType.RAISE, amount=60, street=Street.PREFLOP),
-                         Action(player=villain, type=ActionType.FOLD, street=Street.PREFLOP)]
+                         Action(player=villain, type=ActionType.FOLD, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.UNCALLED_RETURN, amount=40, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.COLLECT, amount=30, street=Street.PREFLOP)]
         else:
             h.actions = [Action(player=hero, type=ActionType.SMALL_BLIND, amount=10, street=Street.PREFLOP),
                          Action(player=villain, type=ActionType.BIG_BLIND, amount=20, street=Street.PREFLOP),
-                         Action(player=hero, type=ActionType.FOLD, street=Street.PREFLOP)]
+                         Action(player=hero, type=ActionType.FOLD, street=Street.PREFLOP),
+                         Action(player=villain, type=ActionType.COLLECT, amount=20, street=Street.PREFLOP)]
         hands.append(h)
 
-    big = _evolution(hands, hero, window=10_000)
-    assert all(s["series"] == s["series_window"] for s in big["stats"])
-
-    small = _evolution(hands, hero, window=4)
-    assert small["window"] == 4
-    vpip = next(s for s in small["stats"] if s["key"] == "vpip")
-    # alternating raise/fold: any 4-hand window is exactly 50% VPIP
-    assert vpip["value_window"] == 50.0
-    assert len(vpip["series_window"]) == len(vpip["series"])
+    ev = compute_evolution(hands, hero)
+    assert ev["hands"] == 250
+    b = ev["blocks"]["100"]
+    # 250 hands -> two full blocks plus a half-full third one
+    assert b["n"] == 3 and b["hands"] == [100, 200, 250]
+    vpip = b["stats"]["vpip"]
+    assert vpip == [50.0, 50.0, 50.0]  # alternating raise/fold
+    assert b["breaks"] == [2] and b["break_labels"] == ["1/1"]
+    assert "200" not in ev["blocks"]  # one block of 200 plus 50 leftovers is not a trend

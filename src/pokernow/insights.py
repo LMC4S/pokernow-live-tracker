@@ -575,26 +575,21 @@ def _stat_values(ps: PlayerStats, wwsf_won: int) -> dict[str, float | None]:
     }
 
 
-BLOCK_SIZES = (50, 100, 200)
+BLOCK_SIZES = (100, 200)
 _EVO_FIELDS = ("hands", "vpip_hands", "pfr_hands", "three_bet_opps", "three_bet_hands", "saw_flop", "wtsd",
                "bets_raises", "calls", "cbet_opps", "cbets", "fold_to_cbet_opps", "fold_to_cbets")
 
 
-def _evolution(hands: list[Hand], hero: str, max_points: int = 150, window: int = 300) -> dict[str, Any] | None:
-    """Running values of the headline stats after each of the hero's hands,
-    both cumulative since the first hand and over a sliding window of the
-    hero's last ``window`` hands, plus the rest of the table pooled as a
-    reference line."""
+def _evolution(hands: list[Hand], hero: str) -> dict[str, Any] | None:
+    """The headline stats and net for one player, in independent blocks of
+    their hands (one point per ``BLOCK_SIZES`` hands), plus the rest of the
+    table pooled as a reference value and the sittings' start dates."""
     stats: dict[str, PlayerStats] = {}
     wwsf: dict[str, int] = {}
-    rows: list[dict[str, float | None]] = []
-    win_rows: list[dict[str, float | None]] = []
     deltas: list[tuple[dict[str, int], int]] = []  # per hero hand: field increments, wwsf won
-    net_bb: list[float] = []  # hero net per hand, in blinds
-    cum: list[float] = []
-    win_net: list[float] = []
+    net_bb: list[float] = []
     breaks: list[int] = []  # hero-hand indices that start a new sitting (3h+ since the previous hand)
-    break_dates: list[str] = []  # the date each sitting started, parallel to ``breaks``
+    break_dates: list[str] = []
     last_at = None
     for h in hands:
         before = {p: ps.saw_flop for p, ps in stats.items()}
@@ -605,26 +600,21 @@ def _evolution(hands: list[Hand], hero: str, max_points: int = 150, window: int 
             if ps.saw_flop > before.get(p, 0) and h.net(p) > 0:
                 wwsf[p] = wwsf.get(p, 0) + 1
         if hero in h.players and hero in stats:
-            rows.append(_stat_values(stats[hero], wwsf.get(hero, 0)))
             deltas.append(({f: getattr(stats[hero], f) - snap[f] for f in _EVO_FIELDS}, wwsf.get(hero, 0) - wwsf_before))
-            acc = PlayerStats(player=hero, name=hero)
-            won = 0
-            for d, w in deltas[-window:]:
-                for f, v in d.items():
-                    setattr(acc, f, getattr(acc, f) + v)
-                won += w
-            win_rows.append(_stat_values(acc, won))
-            nb = h.net(hero) / h.big_blind if h.big_blind else 0.0
-            net_bb.append(nb)
-            cum.append(round((cum[-1] if cum else 0.0) + nb, 1))
-            win_net.append(round(sum(net_bb[-window:]), 1))
+            net_bb.append(h.net(hero) / h.big_blind if h.big_blind else 0.0)
             if last_at and h.started_at and (h.started_at - last_at).total_seconds() > 3 * 3600:
-                breaks.append(len(rows) - 1)
+                breaks.append(len(deltas) - 1)
                 break_dates.append(h.started_at.strftime("%-m/%-d"))
             last_at = h.started_at or last_at
-    # non-overlapping blocks of the hero's hands: one independent point per block
+    if len(deltas) < 2 * min(BLOCK_SIZES):
+        return None
+    others = [ps for p, ps in stats.items() if p != hero]
+    pooled = PlayerStats(player="table", name="table")
+    for ps in others:
+        for f in _EVO_FIELDS:
+            setattr(pooled, f, getattr(pooled, f) + getattr(ps, f))
+    table = _stat_values(pooled, sum(v for p, v in wwsf.items() if p != hero))
     blocks: dict[str, Any] = {}
-    all_breaks = list(breaks)
     for size in BLOCK_SIZES:
         nb = len(deltas) // size
         if len(deltas) - nb * size >= size // 2:
@@ -636,8 +626,7 @@ def _evolution(hands: list[Hand], hero: str, max_points: int = 150, window: int 
         for bi in range(nb):
             acc = PlayerStats(player=hero, name=hero)
             won = 0
-            chunk = deltas[bi * size:(bi + 1) * size]
-            for d, w in chunk:
+            for d, w in deltas[bi * size:(bi + 1) * size]:
                 for f, v in d.items():
                     setattr(acc, f, getattr(acc, f) + v)
                 won += w
@@ -646,7 +635,7 @@ def _evolution(hands: list[Hand], hero: str, max_points: int = 150, window: int 
                 b_stats[k].append(vals[k])
             b_net.append(round(sum(net_bb[bi * size:(bi + 1) * size]), 1))
         seen_b: dict[int, str] = {}
-        for b, lab in zip(all_breaks, break_dates):
+        for b, lab in zip(breaks, break_dates):
             seen_b.setdefault(min(b // size, nb - 1), lab)
         blocks[str(size)] = {
             "size": size, "n": nb, "net": b_net, "stats": b_stats,
@@ -654,47 +643,18 @@ def _evolution(hands: list[Hand], hero: str, max_points: int = 150, window: int 
             "breaks": sorted(seen_b),
             "break_labels": [seen_b[k] for k in sorted(seen_b)],
         }
-    skip = 10 if len(rows) >= 30 else 0  # the first few hands are all noise (0% or 100%) and would squash the axis
-    rows, win_rows, cum, win_net = rows[skip:], win_rows[skip:], cum[skip:], win_net[skip:]
-    kept = [(b - skip, lab) for b, lab in zip(breaks, break_dates) if b >= skip]
-    breaks, break_dates = [b for b, _ in kept], [lab for _, lab in kept]
-    if len(rows) < 2:
+    if not blocks:
         return None
-    others = [ps for p, ps in stats.items() if p != hero]
-    pooled = PlayerStats(player="table", name="table")
-    for ps in others:
-        for f in _EVO_FIELDS:
-            setattr(pooled, f, getattr(pooled, f) + getattr(ps, f))
-    table = _stat_values(pooled, sum(v for p, v in wwsf.items() if p != hero))
-    if len(rows) > max_points:  # thin evenly, always keeping the last point
-        idx = [round(i * (len(rows) - 1) / (max_points - 1)) for i in range(max_points)]
-        rows = [rows[i] for i in idx]
-        win_rows = [win_rows[i] for i in idx]
-        cum = [cum[i] for i in idx]
-        win_net = [win_net[i] for i in idx]
-        mapped: dict[int, str] = {}
-        for b, lab in zip(breaks, break_dates):
-            mapped.setdefault(min(range(len(idx)), key=lambda j: abs(idx[j] - b)), lab)
-        breaks, break_dates = sorted(mapped), [mapped[k] for k in sorted(mapped)]
     return {
-        "n": len(rows),
-        "window": window,
-        "net": {"series": cum, "series_window": win_net},
-        "breaks": breaks,
-        "break_labels": break_dates,
         "hands": len(deltas),
+        "stats": [{"key": k, "label": lab, "desc": desc, "table": table[k]} for k, lab, desc in EVOLUTION_STATS],
         "blocks": blocks,
-        "stats": [
-            {"key": k, "label": lab, "desc": desc, "series": [r[k] for r in rows], "value": rows[-1][k],
-             "series_window": [r[k] for r in win_rows], "value_window": win_rows[-1][k], "table": table[k]}
-            for k, lab, desc in EVOLUTION_STATS
-        ],
     }
 
 
-def compute_evolution(hands: list[Hand], player: str, max_points: int = 150, window: int = 300) -> dict[str, Any] | None:
+def compute_evolution(hands: list[Hand], player: str) -> dict[str, Any] | None:
     """Public entry for the Trends tab: ``_evolution`` for any player."""
-    return _evolution(hands, player, max_points=max_points, window=window)
+    return _evolution(hands, player)
 
 
 def _highlights(hands: list[Hand], hero: str, bb: int, limit: int = 8, min_bb: float = 10) -> dict[str, list[dict[str, Any]]]:
@@ -1053,6 +1013,5 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
         "position_table": pos_table,
         "position_players": pos_players,
         "luck": luck_acc,
-        "evolution": _evolution(hands, hero) if hero else None,
         "highlights": _highlights(hands, hero, bb) if hero else None,
     }

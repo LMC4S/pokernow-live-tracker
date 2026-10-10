@@ -1034,8 +1034,9 @@
       return `<span class="neg">${signed(chips)}</span>` + kinds.map(k => `<span class="tag" title="${signed(BL[k].chips)}">${BL[k].n} ${k}</span>`).join('');
     };
     if (luckRows.length) {
-      html += `<section><h2>Luck · money <small>· card luck priced on chips already in the pot · all players · from cards shown at showdown</small></h2><div class="panel"><table><thead><tr><th>Player</th><th>Net</th><th>Measured SDs</th><th>Money luck</th><th>All-in hands (luck)</th><th>Big pots lost</th><th>Luck-adj net</th></tr></thead><tbody>`;
-      html += luckRows.map(([p, a]) => `<tr class="${p === d.hero ? 'hero-row' : ''}"><td>${esc(short(p))}${p === d.hero ? ' <span class="tag">you</span>' : ''}</td><td class="${cls(a.net)}">${signed(a.net)}</td><td>${a.measured}</td><td class="${cls(a.luck)}" title="${a.luck_bb != null ? signed(a.luck_bb) + ' bb' : ''}">${signed(a.luck)}</td><td>${a.allin_n}${a.allin_n ? ` <span class="${cls(a.allin_luck)}">(${signed(a.allin_luck)})</span>` : ''}</td><td>${bigLossCell(a.big_loss)}</td><td class="${cls(a.adjusted_net)}">${signed(a.adjusted_net)}</td></tr>`).join('');
+      html += `<section><h2>Luck · money <small>· card luck priced on chips already in the pot · all players · from cards shown at showdown</small></h2><div class="panel"><table class="sortable" data-default="3"><thead><tr><th>Player</th><th>Net</th><th>Measured SDs</th><th>Money luck</th><th>All-in hands (luck)</th><th>Big pots lost</th><th>Luck-adj net</th></tr></thead><tbody>`;
+      const bigLossChips = (BL) => { const c = ['outdrawn', 'cooler', 'other'].reduce((t, k) => t + (BL && BL[k] && BL[k].n ? BL[k].chips : 0), 0); return c ? -c : ''; };  // positive magnitude so ▼ shows the biggest loss first; no losses sort last
+      html += luckRows.map(([p, a]) => `<tr class="${p === d.hero ? 'hero-row' : ''}"><td data-v="${esc(short(p))}">${esc(short(p))}${p === d.hero ? ' <span class="tag">you</span>' : ''}</td><td data-v="${a.net}" class="${cls(a.net)}">${signed(a.net)}</td><td data-v="${a.measured}">${a.measured}</td><td data-v="${a.luck}" class="${cls(a.luck)}" title="${a.luck_bb != null ? signed(a.luck_bb) + ' bb' : ''}">${signed(a.luck)}</td><td data-v="${a.allin_n}">${a.allin_n}${a.allin_n ? ` <span class="${cls(a.allin_luck)}">(${signed(a.allin_luck)})</span>` : ''}</td><td data-v="${bigLossChips(a.big_loss)}">${bigLossCell(a.big_loss)}</td><td data-v="${a.adjusted_net}" class="${cls(a.adjusted_net)}">${signed(a.adjusted_net)}</td></tr>`).join('');
       html += `</tbody></table></div><div class="ins-note">Money luck prices each flop, turn and river card as the change in equity times the pot at that moment, summed over the hand. Only money already in the pot counts, so a rivered draw after a small call scores little and the same river with the stacks in scores in full. It sums to zero across the table. Only showdowns where two or more hands were revealed are scored. Folds to scare cards and mucked hands are not, so Luck-adj net is net minus showdown luck and nothing else. Measured SDs is the number of scored showdowns. All-in hands is how many hands the player was all in, with the luck in those hands. Big pots lost sorts every scored showdown lost for 40 bb or more by what happened. Outdrawn: the favourite when the money went in. Cooler: behind, but holding a hand nobody folds (an overpair, two pair or better, JJ+ or AK preflop) that beat at least 85% of all possible hands at that point. Other: behind with less than that. Outdraws are already inside money luck, so do not subtract them from adjusted net. A large adjusted loss made of coolers means the player ran into hands; one made of other means the chips went in behind with less.</div></section>`;
     }
     // ---- table-wide position ledger (needs no hole cards) ----
@@ -1046,9 +1047,9 @@
       const PP = d.position_players || {};
       const ppRows = Object.entries(PP).sort((a, b2) => (b2[1].ip.net + b2[1].oop.net) - (a[1].ip.net + a[1].oop.net));
       if (ppRows.length) {
-        const half = (g) => `<td>${g.hands}</td><td class="${cls(g.net)}">${signed(g.net)}</td><td class="${cls(g.net)}">${g.bb_per_hand != null ? signed(g.bb_per_hand.toFixed(2)) : '–'}</td>`;
-        html += `<div class="panel" style="margin-top:10px"><table><thead><tr><th>Player</th><th>IP hands</th><th>IP net</th><th>IP bb/hand</th><th>OOP hands</th><th>OOP net</th><th>OOP bb/hand</th></tr></thead><tbody>`;
-        html += ppRows.map(([p2, g]) => `<tr class="${p2 === d.hero ? 'hero-row' : ''}"><td>${esc(short(p2))}${p2 === d.hero ? ' <span class="tag">you</span>' : ''}</td>${half(g.ip)}${half(g.oop)}</tr>`).join('');
+        const half = (g) => `<td data-v="${g.hands}">${g.hands}</td><td data-v="${g.net}" class="${cls(g.net)}">${signed(g.net)}</td><td data-v="${g.bb_per_hand != null ? g.bb_per_hand : ''}" class="${cls(g.net)}">${g.bb_per_hand != null ? signed(g.bb_per_hand.toFixed(2)) : '–'}</td>`;
+        html += `<div class="panel" style="margin-top:10px"><table class="sortable"><thead><tr><th>Player</th><th>IP hands</th><th>IP net</th><th>IP bb/hand</th><th>OOP hands</th><th>OOP net</th><th>OOP bb/hand</th></tr></thead><tbody>`;
+        html += ppRows.map(([p2, g]) => `<tr class="${p2 === d.hero ? 'hero-row' : ''}"><td data-v="${esc(short(p2))}">${esc(short(p2))}${p2 === d.hero ? ' <span class="tag">you</span>' : ''}</td>${half(g.ip)}${half(g.oop)}</tr>`).join('');
         html += `</tbody></table></div>`;
       }
       html += `<div class="ins-note">Net chips when acting last after the flop (IP) and when acting earlier (OOP), over ${PT.ip.hands + PT.oop.hands} flop-seen player-hands. This is bookkeeping, not a measure of positional skill. The OOP pool includes the blinds and forced defends with weak hands, while the IP pool is chosen ranges, so everyone looks better in position. Compare a player's OOP number with the table's rather than with zero. IP and OOP do not sum to zero because folded blinds are in these pots. Per-player samples are small and one big pot can dominate a row.</div></section>`;
@@ -1058,7 +1059,32 @@
 
     $('#ins-root').innerHTML = html || '<div class="muted" style="padding:20px">Nothing to compute yet.</div>';
     $('#ins-root').querySelectorAll('[data-jump]').forEach(el => el.addEventListener('click', () => jumpToHand(+el.dataset.jump)));
+    $('#ins-root').querySelectorAll('table.sortable').forEach(makeSortable);
 
+  }
+
+  // Click-to-sort for static tables: each <td> carries its sort value in data-v.
+  function makeSortable(table) {
+    const ths = [...table.querySelectorAll('thead th')];
+    const tbody = table.querySelector('tbody');
+    let key = table.dataset.default != null ? +table.dataset.default : -1, dir = -1;
+    const paint = () => ths.forEach((th, i) => {
+      th.classList.toggle('sorted', i === key);
+      th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (i === key ? (dir < 0 ? ' ▼' : ' ▲') : '');
+    });
+    const apply = () => {
+      const rows = [...tbody.querySelectorAll('tr')];
+      const v = (tr) => { const c = tr.children[key]; const raw = c ? (c.dataset.v ?? c.textContent) : ''; const n = parseFloat(raw); return raw === '' ? null : Number.isFinite(n) && /^-?[\d.]+(e[-+]?\d+)?$/i.test(raw) ? n : raw; };
+      rows.sort((a, b) => {
+        const av = v(a), bv = v(b);
+        if (av == null && bv == null) return 0; if (av == null) return 1; if (bv == null) return -1;
+        return (typeof av === 'string' ? av.localeCompare(bv) : av - bv) * dir;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+      paint();
+    };
+    ths.forEach((th, i) => th.addEventListener('click', () => { dir = key === i ? -dir : (i === 0 ? 1 : -1); key = i; apply(); }));
+    paint();
   }
 
   // ---------- hands ----------
@@ -1077,7 +1103,7 @@
     const inv = $('#f-involve').value; if (playerText && inv) q.set('involvement', inv);
     const mp = parseInt($('#f-minpot').value, 10); if (mp > 0) q.set('min_pot', mp);
     if ($('#f-showdown').checked) q.set('showdown', 'true');
-    q.set('limit', 5000);
+    q.set('limit', 1000000);
     const data = await api(`/api/sessions/${state.sid}/hands?` + q.toString());
     state.hands = data.hands;
     state.handsPage = 1;

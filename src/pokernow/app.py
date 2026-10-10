@@ -505,7 +505,7 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         involvement: str | None = Query(default=None, description="With player: vpip | flop | showdown | won"),
         min_pot: int = Query(default=0),
         showdown: bool | None = Query(default=None),
-        limit: int = Query(default=500, le=5000),
+        limit: int = Query(default=500, ge=1),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
         s = store.get(sid)

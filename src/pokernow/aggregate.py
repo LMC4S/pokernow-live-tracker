@@ -138,6 +138,43 @@ def _keys_of(session: Session, is_mine) -> set[str]:
     return out
 
 
+def apply_identities(session: Session, same: list[list[str]] | None) -> list[dict[str, Any]]:
+    """Collapse the manual "same person" groups inside one session, so a
+    player who switched devices mid-night is one row here too, not only in
+    the all-sessions merge. The key they last played under wins; the others
+    become aliases (shown as aka). Returns the groups that actually merged
+    something, in the same shape ``merge_sessions`` reports."""
+    if not same:
+        return []
+    rep = _rep_of(same)
+    latest: dict[str, str] = {}  # rep -> last key seen
+    members: dict[str, dict[str, None]] = {}
+    for h in session.hands:
+        for st in h.seats:
+            pid = _split_key(st.player)[1]
+            if pid:
+                latest[rep(pid)] = st.player
+                members.setdefault(rep(pid), {})[st.player] = None
+    canon_of = {k: latest[r] for r, ks in members.items() if len(ks) > 1 for k in ks}
+    if not canon_of:
+        return []
+
+    def canon(key: str) -> str:
+        return canon_of.get(key, key)
+
+    _remap_session(session, canon)
+    for old, new in canon_of.items():
+        if old != new:
+            session.aliases[old] = new
+    applied = []
+    for g in same:
+        reps = {rep(i) for i in g if i}
+        keys = sorted(k for r in reps for k in members.get(r, {}) if k in canon_of)
+        if len({_split_key(k)[1] for k in keys}) >= 2:
+            applied.append({"ids": [i for i in g if i], "as": canon_of[keys[0]], "members": keys})
+    return applied
+
+
 def merge_sessions(sources: list[Source], same: list[list[str]] | None = None) -> Aggregate:
     """Merge every source where you can be identified into one session.
 

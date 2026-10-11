@@ -167,3 +167,43 @@ def test_api_identities(tmp_path):
     assert r.json()["same"] == [["bbb222", "newdev"]]
     assert (tmp_path / "identities.json").exists()
     assert "Bob" not in names() and "Bobby" in names()  # the merge picked the change up
+
+
+def test_apply_identities_merges_within_one_session():
+    from pokernow.aggregate import apply_identities
+    from pokernow.parser import parse_session
+
+    s = parse_session(_variant(rename={"Bob @ bbb222": "Bobby @ newdev"}))
+    # make Bob appear under both keys in one session: first half old key, second half new
+    half = len(s.hands) // 2
+    for h in s.hands[:half]:
+        for st in h.seats:
+            if st.player == "Bobby @ newdev":
+                st.player = "Bob @ bbb222"
+        for a in h.actions:
+            if a.player == "Bobby @ newdev":
+                a.player = "Bob @ bbb222"
+        for d in (h.contributions, h.collected, h.shown_cards, h.known_cards):
+            if "Bobby @ newdev" in d:
+                d["Bob @ bbb222"] = d.pop("Bobby @ newdev")
+    assert apply_identities(s, [["zzz", "yyy"]]) == []  # unrelated group: nothing happens
+    before = {p for h in s.hands for p in h.players}
+    assert {"Bob @ bbb222", "Bobby @ newdev"} <= before
+    applied = apply_identities(s, [["bbb222", "newdev"]])
+    assert applied and applied[0]["as"] == "Bobby @ newdev" and applied[0]["members"] == ["Bob @ bbb222", "Bobby @ newdev"]
+    keys = {p for h in s.hands for p in h.players}
+    assert "Bob @ bbb222" not in keys and "Bobby @ newdev" in keys
+    assert s.aliases["Bob @ bbb222"] == "Bobby @ newdev"
+    bobby = next(p for p in compute_session_stats(s).players if p.player == "Bobby @ newdev")
+    assert bobby.aka == ["Bob"]
+
+
+def test_identities_apply_to_single_sessions_via_api(tmp_path):
+    client = TestClient(create_app(str(tmp_path)))
+    text = _variant(rename={"Bob @ bbb222": "Bobby @ newdev"})
+    client.put("/api/identities", json={"same": [["aaa111", "newdev"]]})  # Alice (hero) and Bobby are "one person"
+    r = client.post("/api/sessions", files={"file": ("n2.csv", text.encode(), "text/csv")}).json()
+    players = r["summary"]["players"]
+    assert len(players) == 3  # 4 players in the fixture, Alice and Bobby collapsed into one row
+    merged = next(p for p in players if p["player"].split(" @ ")[1] in ("aaa111", "newdev"))
+    assert merged["aka"]  # the other name is shown as aka

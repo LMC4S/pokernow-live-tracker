@@ -583,7 +583,8 @@
     const players = [...state.summary.players].sort((x, y) => y.hands - x.hands);
     const opt = (p) => `<option value="${esc(p.player.split(' @ ').pop())}">${esc(p.name)}${p.aka && p.aka.length ? ' (aka ' + esc(p.aka.slice(0, 3).join(', ')) + (p.aka.length > 3 ? '…' : '') + ')' : ''} · ${num(p.hands)} hands</option>`;
     html += `<div style="margin-top:12px"><b>Same person</b> <span class="muted" style="font-size:12.5px">When someone shows up under a new player ID, tell the merge they are one player. Saved in <code>identities.json</code> next to the archives.</span></div>`;
-    html += (a.same || []).map((g, i) => `<div class="flowrow" style="padding:3px 0"><span style="flex:1 1 auto">${g.members.map(m => `<span class="pill" title="${esc(m)}">${esc(short(m))}</span>`).join(' = ')} <span class="muted">→ ${esc(short(g.as))}</span></span><a class="same-undo" data-i="${i}" style="color:var(--neg);cursor:pointer;font-size:12.5px">separate</a></div>`).join('');
+    const sameRows = (a.same || []).map((g, i) => `<div class="flowrow" style="padding:3px 0"><span style="flex:1 1 auto">${g.members.map(m => `<span class="pill" title="${esc(m)}">${esc(short(m))}</span>`).join(' = ')} <span class="muted">→ ${esc(short(g.as))}</span></span><a class="same-undo" data-i="${i}" style="color:var(--neg);cursor:pointer;font-size:12.5px">separate</a></div>`).join('');
+    if (sameRows) html += `<details id="same-list" style="margin-top:4px"${(() => { try { return localStorage.getItem('sameOpen') === '1' ? ' open' : ''; } catch { return ''; } })()}><summary class="muted" style="cursor:pointer;font-size:12.5px">${a.same.length} merged group${a.same.length === 1 ? '' : 's'} · applies to every session, not only this view</summary>${sameRows}</details>`;
     html += `<div class="controls" style="margin-top:6px"><select id="same-a">${players.map(opt).join('')}</select><span class="muted">is the same person as</span><select id="same-b">${players.map(opt).join('')}</select><button class="ghost" id="same-add">Merge</button><span class="err hidden" id="same-err" style="margin:0"></span></div>`;
     if (a.big_blinds.length > 1) html += `<div class="warn">Mixed stakes (big blind ${a.big_blinds.join(', ')}). Chip totals add different stakes together. The bb figures on the Insights tab convert hand by hand, but Net (bb) and bb/100 in the players table use the most common blind.</div>`;
     box.innerHTML = html + `</section>`;
@@ -606,6 +607,8 @@
       const cur = (await api('/api/identities')).same;
       saveSame([...cur, [x, y]]);
     });
+    const sameList = $('#same-list');
+    if (sameList) sameList.addEventListener('toggle', () => { try { localStorage.setItem('sameOpen', sameList.open ? '1' : '0'); } catch {} });
     box.querySelectorAll('.same-undo').forEach(el => el.addEventListener('click', async () => {
       const cur = (await api('/api/identities')).same;
       const ids = new Set(a.same[+el.dataset.i].ids);

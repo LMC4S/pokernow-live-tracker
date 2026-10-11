@@ -35,7 +35,7 @@ You can also drop the replayer's `poker-now-hands-game-<id>.json` or the log CSV
 
 **Trends**, for any player at the table, no hole cards needed. VPIP, PFR, 3-bet, AF, c-bet, fold to c-bet, WTSD and won-when-saw-flop in independent blocks of 100 or 200 hands, with the rest of the table as a reference line, and an overlay that puts net per block as bars above any of those stats, with new sittings marked and dated. It shows where a change in play happened; it does not claim to say what caused it.
 
-**All my sessions.** Names change every night and IDs change with devices, but you are always identifiable, so one button merges every archive and upload where your player ID appears into one session with the same Overview, Insights and Trends. Other players merge by ID too, with earlier names shown as aka. Mark an ID that changed with the **Same person** control; those groups live in `data/identities.json` and never leave your machine.
+**All my sessions.** Names change every night and IDs change with devices, but you are always identifiable, so one button merges every archive and upload where your player ID appears into one session with the same Overview, Insights and Trends. Other players merge by ID too, with earlier names shown as aka. Mark an ID that changed with the **Same person** control; those groups live in `data/identities.json`, never leave your machine, and apply to every single-session view too, not only the merge.
 
 ## CLI and API
 

@@ -11,7 +11,7 @@ import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -21,7 +21,7 @@ from pydantic import BaseModel
 import os
 import uuid
 
-from .aggregate import ME_ID, ME_NAME, Aggregate, Source, merge_sessions
+from .aggregate import ME_ID, ME_NAME, Aggregate, Source, apply_identities, merge_sessions
 from .export import write_exports
 from .fetch import Credentials, FetchError, GameArchive, default_data_dir, parse_game_ref
 from .insights import compute_evolution, compute_insights, hand_luck
@@ -42,9 +42,12 @@ class StoredSession:
 
 
 class SessionStore:
-    def __init__(self) -> None:
+    def __init__(self, identities_provider: Callable[[], list[list[str]]] | None = None) -> None:
         self._lock = threading.Lock()
         self._items: dict[str, StoredSession] = {}
+        # manual "same person" groups, applied to every single session on the
+        # way in (the all-sessions merge applies them itself)
+        self.identities_provider = identities_provider
 
     def add(self, name: str, text: str) -> StoredSession:
         sid = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
@@ -55,6 +58,8 @@ class SessionStore:
         return self.put(sid, name, session)
 
     def put(self, sid: str, name: str, session: Session) -> StoredSession:
+        if sid != ME_ID and self.identities_provider is not None:
+            apply_identities(session, self.identities_provider())
         stats = compute_session_stats(session)
         stored = StoredSession(id=sid, name=name, session=session, stats=stats)
         with self._lock:
@@ -231,7 +236,7 @@ class FetchJobs:
 
 def create_app(data_dir: str | None = None) -> FastAPI:
     app = FastAPI(title="PokerNow Hand History", version="0.1.0")
-    store = SessionStore()
+    store = SessionStore(identities_provider=lambda: read_identities())
 
     # Login cookie pasted through the UI. Kept only in this process's memory
     # (never written to disk) and read fresh on every fetch/poll, so pasting or
@@ -323,6 +328,12 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         groups = [[i.strip() for i in g if i and i.strip()] for g in req.same]
         groups = [g for g in groups if len(g) >= 2]
         write_identities(groups)
+        # re-read every open archive so the single-session views pick the change up
+        for item in store.items():
+            if item.id.startswith("game-"):
+                arch = GameArchive(item.id[len("game-"):], jobs.data_dir)
+                if arch.exists():
+                    store.put(item.id, item.name, load_archive(arch))
         return {"same": groups, "path": identities_path}
 
     @app.post("/api/me/load")

@@ -47,6 +47,10 @@ class PlayerStats:
     all_ins: int = 0
     biggest_pot_won: int = 0
     total_won: int = 0  # gross collected
+    # Simulated casino rake paid as the pot winner: 10% of the pot capped at 5/3 bb
+    # plus a 2/3 bb promo drop (Venetian 1/3 rules, $3 = 1 bb), no flop no drop,
+    # split between winners pro rata. Never deducted from ``net``; the UI toggles it.
+    rake_sim: float = 0.0
     total_invested: int = 0
     cbet_opps: int = 0
     cbets: int = 0
@@ -113,6 +117,13 @@ class PlayerStats:
             win_pct=_pct(self.hands_won, self.hands),
             net_bb=round(self.net / big_blind, 1) if big_blind else None,
             bb_per_100=round(100 * self.net / big_blind / self.hands, 1) if big_blind and self.hands else None,
+        )
+        raked = self.net - self.rake_sim
+        d.update(
+            rake_sim=round(self.rake_sim),
+            net_raked=round(raked),
+            net_bb_raked=round(raked / big_blind, 1) if big_blind else None,
+            bb_per_100_raked=round(100 * raked / big_blind / self.hands, 1) if big_blind and self.hands else None,
         )
         return d
 
@@ -181,6 +192,11 @@ def compute_hand_stats(hand: Hand, stats: dict[str, PlayerStats]) -> None:
         ps.total_invested += max(hand.contributions.get(p, 0), 0)
         won = hand.collected.get(p, 0)
         ps.total_won += won
+        if won > 0 and len(hand.board) >= 3 and hand.big_blind:
+            pot_collected = sum(hand.collected.values())
+            if pot_collected > 0:
+                rake = min(0.10 * pot_collected, hand.big_blind * 5 / 3) + hand.big_blind * 2 / 3
+                ps.rake_sim += rake * won / pot_collected
         if won > 0:
             ps.hands_won += 1
             ps.biggest_pot_won = max(ps.biggest_pot_won, hand.pot)

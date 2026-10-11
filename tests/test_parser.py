@@ -263,3 +263,29 @@ def test_two_partial_shows_consolidate():
     h = s.hands[0]
     assert h.shown_cards == {"Bo @ b": ["Qs", "As"]}
     assert h.known_cards["Bo @ b"] == ["Qs", "As"]
+
+
+def test_simulated_rake_is_paid_by_pot_winners_only(session):
+    from pokernow.stats import PlayerStats, compute_hand_stats
+
+    stats: dict[str, PlayerStats] = {}
+    for h in session.hands:
+        compute_hand_stats(h, stats)
+    for h in session.hands:
+        if len(h.board) < 3 or not h.big_blind:
+            continue
+        for p, won in h.collected.items():
+            if won > 0:
+                assert stats[p].rake_sim > 0
+    for ps in stats.values():  # only pot collectors carry rake
+        if ps.total_won == 0:
+            assert ps.rake_sim == 0
+    # a hand that saw a flop and had one winner charges exactly the formula
+    one = next(h for h in session.hands if len(h.board) >= 3 and h.big_blind and len([c for c in h.collected.values() if c > 0]) == 1)
+    pot = sum(one.collected.values())
+    solo: dict[str, PlayerStats] = {}
+    compute_hand_stats(one, solo)
+    winner = next(p for p, c in one.collected.items() if c > 0)
+    assert solo[winner].rake_sim == pytest.approx(min(0.10 * pot, one.big_blind * 5 / 3) + one.big_blind * 2 / 3)
+    d = solo[winner].to_dict(one.big_blind)
+    assert d["net_raked"] == round(solo[winner].net - solo[winner].rake_sim)

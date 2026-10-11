@@ -210,7 +210,16 @@ class FetchJobs:
             arch = GameArchive(name, self.data_dir)
             if arch.exists():
                 meta = arch.load_meta()
-                out.append({"game_id": name, "files": list(arch.files()), **{k: meta.get(k) for k in ("last_refresh", "hands", "log_lines", "host")}})
+                started = None
+                stats_path = os.path.join(arch.dir, "stats.json")
+                if os.path.exists(stats_path):
+                    try:
+                        with open(stats_path, encoding="utf-8") as f:
+                            started = json.load(f).get("started_at")
+                    except (OSError, ValueError):
+                        started = None
+                out.append({"game_id": name, "files": list(arch.files()), "started_at": started,
+                            **{k: meta.get(k) for k in ("last_refresh", "hands", "log_lines", "host")}})
         return out
 
     def load_archive(self, game_id: str) -> StoredSession:

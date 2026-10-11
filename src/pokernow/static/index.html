@@ -240,7 +240,7 @@
     </div>
     <div id="archives" class="hidden" style="margin:14px 0">
       <h2>Archived games <small>fetched earlier, stored on this machine</small></h2>
-      <div class="panel"><table id="archives-table"><thead><tr><th>Game</th><th>Hands</th><th>Log lines</th><th>Last refresh</th><th></th></tr></thead><tbody></tbody></table></div>
+      <div class="panel"><table id="archives-table"><thead><tr><th data-k="game_id" title="Click to sort">Game</th><th data-k="started_at" title="Click to sort">Session date</th><th data-k="hands" title="Click to sort">Hands</th><th data-k="log_lines" title="Click to sort">Log lines</th><th data-k="last_refresh" title="Click to sort">Last refresh</th><th></th></tr></thead><tbody></tbody></table></div>
     </div>
     <div id="drop" class="drop" style="margin-top:14px">
       <div><strong>…or drop an export here</strong> (the session-log CSV, or the hands <code>.json</code> from the replayer), or click to choose a file.<br>
@@ -348,7 +348,7 @@
 <script>
 (() => {
   const $ = (s) => document.querySelector(s);
-  const state = { sid: null, summary: null, gameId: null, hands: [], sort: { key: 'net', dir: -1 }, filterPlayer: '', selectedHand: null, liveVersion: 0, liveTimer: null, hero: null, handsSort: { key: 'number', dir: 1 }, replayHtml: null, rp: null, rpTimer: null, rpPeek: {}, tab: 'overview', insights: null, insightsFor: null, evoBlock: 100, evoOverlay: ['vpip', 'wtsd'], trends: null, trendsFor: null, trendsPlayer: null, aggregate: null, nArchives: 0, nUploads: 0, rpShowAll: (() => { try { return localStorage.getItem('rpShowAll') !== '0'; } catch { return true; } })() };
+  const state = { sid: null, summary: null, gameId: null, hands: [], sort: { key: 'net', dir: -1 }, filterPlayer: '', selectedHand: null, liveVersion: 0, liveTimer: null, hero: null, handsSort: { key: 'number', dir: 1 }, replayHtml: null, rp: null, rpTimer: null, rpPeek: {}, tab: 'overview', insights: null, insightsFor: null, evoBlock: 100, evoOverlay: ['vpip', 'wtsd'], trends: null, trendsFor: null, trendsPlayer: null, aggregate: null, nArchives: 0, nUploads: 0, archives: [], archivesSort: { key: 'started_at', dir: -1 }, rpShowAll: (() => { try { return localStorage.getItem('rpShowAll') !== '0'; } catch { return true; } })() };
   const DARK = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const COLORS = DARK
     ? ['#8fb0e0','#6f93b8','#9a9a9a','#5aa8a8','#c9a227','#c0605a','#9aa65a','#a98bc0','#b9cde6','#d0d0d0']
@@ -407,6 +407,11 @@
     refreshArchives();
   };
   $('#btn-new').addEventListener('click', goHome);
+  $('#archives-table thead').querySelectorAll('th[data-k]').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.k;
+    state.archivesSort = { key: k, dir: state.archivesSort.key === k ? -state.archivesSort.dir : (k === 'game_id' ? 1 : -1) };
+    renderArchives();
+  }));
   $('#home-title').addEventListener('click', goHome);
 
   // ---------- help dialog & login cookie ----------
@@ -490,8 +495,25 @@
     let list = [];
     try { list = await api('/api/archives'); } catch { return; }
     $('#archives').classList.toggle('hidden', !list.length);
-    state.nArchives = list.length; updateMeBox();
-    $('#archives-table tbody').innerHTML = list.map(a => `<tr data-g="${esc(a.game_id)}" title="Click to open"><td style="text-align:left">${esc(a.game_id)}</td><td>${a.hands ?? '–'}</td><td>${a.log_lines ?? '–'}</td><td>${a.last_refresh ? new Date(a.last_refresh).toLocaleString() : '–'}</td><td><button class="ghost btn-refresh">Refresh</button> <button class="ghost btn-live-a">● Live</button></td></tr>`).join('');
+    state.nArchives = list.length; state.archives = list; updateMeBox();
+    renderArchives();
+  }
+
+  function renderArchives() {
+    const { key, dir } = state.archivesSort;
+    const list = state.archives.slice().sort((a, b) => {
+      const x = a[key], y = b[key];
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * dir;
+    });
+    const dateTxt = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '–';
+    $('#archives-table thead').querySelectorAll('th[data-k]').forEach(th => {
+      th.classList.toggle('sorted', th.dataset.k === key);
+      th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (th.dataset.k === key ? (dir > 0 ? ' ▲' : ' ▼') : '');
+    });
+    $('#archives-table tbody').innerHTML = list.map(a => `<tr data-g="${esc(a.game_id)}" title="Click to open"><td style="text-align:left">${esc(a.game_id)}</td><td>${dateTxt(a.started_at)}</td><td>${a.hands ?? '–'}</td><td>${a.log_lines ?? '–'}</td><td>${a.last_refresh ? new Date(a.last_refresh).toLocaleString() : '–'}</td><td><button class="ghost btn-refresh">Refresh</button> <button class="ghost btn-live-a">● Live</button></td></tr>`).join('');
     $('#archives-table').querySelectorAll('tr[data-g]').forEach(tr => {
       const g = tr.dataset.g;
       tr.addEventListener('click', async (e) => {

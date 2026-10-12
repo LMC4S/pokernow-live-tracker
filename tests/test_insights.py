@@ -379,10 +379,49 @@ def test_evolution_blocks():
 
     ev = compute_evolution(hands, hero)
     assert ev["hands"] == 250
-    b = ev["blocks"]["100"]
-    # 250 hands -> two full blocks plus a half-full third one
-    assert b["n"] == 3 and b["hands"] == [100, 200, 250]
-    vpip = b["stats"]["vpip"]
-    assert vpip == [50.0, 50.0, 50.0]  # alternating raise/fold
-    assert b["breaks"] == [2] and b["break_labels"] == ["1/1"]
-    assert "200" not in ev["blocks"]  # one block of 200 plus 50 leftovers is not a trend
+    w = ev["windows"]["100"]
+    # a bell window with 100 effective hands spans 163, moved 5 at a time, the last point reaching hand 250
+    assert w["size"] == 100 and w["step"] == 5 and w["span"] == 163
+    assert w["idx"][0] == 81 and w["idx"][-1] == 250 - 1 - 81 and w["n"] == len(w["idx"])
+    assert all(abs(v - 50.0) < 1.0 for v in w["stats"]["vpip"])  # alternating raise/fold
+    assert ev["breaks"] == [200] and ev["break_labels"] == ["1/1"]
+    assert "200" not in ev["windows"]  # 250 hands is less than two windows of 200
+    assert ev["big_pots"] == []
+
+
+def test_evolution_big_pots_and_net():
+    from pokernow.insights import compute_evolution, BIG_POT_BB
+    from pokernow.models import Hand, SeatInfo, Action, Street, ActionType
+    from datetime import datetime, timedelta
+
+    hero, villain = "A @ a1", "B @ b1"
+    hands = []
+    big_at = {60, 65, 150}  # 65 is too soon after 60 to start a new segment
+    for i in range(240):
+        h = Hand(number=i + 1, id=f"h{i}", game_type="NLH", dealer=hero, started_at=datetime(2026, 1, 1) + timedelta(minutes=i))
+        h.seats = [SeatInfo(seat=1, player=hero, stack=10000), SeatInfo(seat=2, player=villain, stack=10000)]
+        h.small_blind, h.big_blind = 10, 20
+        if i in big_at:  # hero wins a 120 bb pot
+            h.actions = [Action(player=villain, type=ActionType.SMALL_BLIND, amount=10, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.BIG_BLIND, amount=20, street=Street.PREFLOP),
+                         Action(player=villain, type=ActionType.RAISE, amount=2400, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.CALL, amount=2380, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.COLLECT, amount=4800, street=Street.SHOWDOWN)]
+            h.contributions, h.collected = {hero: 2400, villain: 2400}, {hero: 4800}
+        else:
+            h.actions = [Action(player=hero, type=ActionType.SMALL_BLIND, amount=10, street=Street.PREFLOP),
+                         Action(player=villain, type=ActionType.BIG_BLIND, amount=20, street=Street.PREFLOP),
+                         Action(player=hero, type=ActionType.FOLD, street=Street.PREFLOP),
+                         Action(player=villain, type=ActionType.COLLECT, amount=20, street=Street.PREFLOP)]
+            h.contributions, h.collected = {hero: 10, villain: 20}, {villain: 30}
+        hands.append(h)
+
+    assert BIG_POT_BB == 100
+    ev = compute_evolution(hands, hero)
+    assert [p["number"] for p in ev["big_pots"]] == [61, 66, 151]
+    assert ev["big_pots"][0] == {"i": 60, "number": 61, "net_bb": 120.0}
+    w = ev["windows"]["100"]
+    # every point sees at least one 120 bb pot inside its 163-hand span, so all are positive,
+    # and the first (centred on hand 82, both early pots close by) is the highest
+    assert all(v > 0 for v in w["net100"]) and w["net100"][0] == max(w["net100"])
+    assert w["cum"][0] == round(sum(-0.5 if i not in big_at else 120 for i in range(82)), 1)

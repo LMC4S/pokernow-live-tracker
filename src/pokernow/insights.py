@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import random
 from itertools import combinations
+from operator import mul
 from math import comb, erf, exp, lgamma, log, sqrt
 from typing import Any
 
@@ -575,19 +576,41 @@ def _stat_values(ps: PlayerStats, wwsf_won: int) -> dict[str, float | None]:
     }
 
 
-BLOCK_SIZES = (100, 200)
+WINDOW_SIZES = (100, 200, 400)  # sliding-window lengths offered by the Trends tab
+WINDOW_STEPS = 20  # a window moves 1/20 of its length at a time
+
+
+def _bell_kernel(size: int) -> list[float]:
+    """A bell-shaped window whose effective sample size is ``size`` hands:
+    three box filters convolved (a quadratic B-spline, close to a Gaussian).
+    Nearer hands count more, so the trend bends instead of jittering as single
+    hands enter and leave a flat window. Effective n = (sum w)^2 / sum w^2."""
+    m = max(1, round(size * 0.55))  # a quadratic B-spline of box width m has n_eff ≈ 1.82 m
+    k = [1.0] * m
+    for _ in range(2):
+        out = [0.0] * (len(k) + m - 1)
+        for i, v in enumerate(k):
+            for j in range(m):
+                out[i + j] += v
+        k = out
+    if len(k) % 2 == 0:
+        k.append(0.0)  # odd length, so the centre is a hand
+    return k
+BIG_POT_BB = 100  # a pot this big for the player is marked on the Trends time axis
 _EVO_FIELDS = ("hands", "vpip_hands", "pfr_hands", "three_bet_opps", "three_bet_hands", "saw_flop", "wtsd",
                "bets_raises", "calls", "cbet_opps", "cbets", "fold_to_cbet_opps", "fold_to_cbets")
 
 
 def _evolution(hands: list[Hand], hero: str) -> dict[str, Any] | None:
-    """The headline stats and net for one player, in independent blocks of
-    their hands (one point per ``BLOCK_SIZES`` hands), plus the rest of the
-    table pooled as a reference value and the sittings' start dates."""
+    """The headline stats and win rate of one player over a sliding window of
+    their hands (one point every ``size / WINDOW_STEPS`` hands, each scoring
+    the ``size`` hands centred on it), plus the rest of the table pooled as a
+    reference value, the sittings' start positions and the player's big pots."""
     stats: dict[str, PlayerStats] = {}
     wwsf: dict[str, int] = {}
     deltas: list[tuple[dict[str, int], int]] = []  # per hero hand: field increments, wwsf won
     net_bb: list[float] = []
+    numbers: list[int] = []  # hand number of each of the player's hands
     breaks: list[int] = []  # hero-hand indices that start a new sitting (3h+ since the previous hand)
     break_dates: list[str] = []
     last_at = None
@@ -602,11 +625,13 @@ def _evolution(hands: list[Hand], hero: str) -> dict[str, Any] | None:
         if hero in h.players and hero in stats:
             deltas.append(({f: getattr(stats[hero], f) - snap[f] for f in _EVO_FIELDS}, wwsf.get(hero, 0) - wwsf_before))
             net_bb.append(h.net(hero) / h.big_blind if h.big_blind else 0.0)
+            numbers.append(h.number)
             if last_at and h.started_at and (h.started_at - last_at).total_seconds() > 3 * 3600:
                 breaks.append(len(deltas) - 1)
                 break_dates.append(h.started_at.strftime("%-m/%-d"))
             last_at = h.started_at or last_at
-    if len(deltas) < 2 * min(BLOCK_SIZES):
+    n = len(deltas)
+    if n < 2 * min(WINDOW_SIZES):
         return None
     others = [ps for p, ps in stats.items() if p != hero]
     pooled = PlayerStats(player="table", name="table")
@@ -614,41 +639,55 @@ def _evolution(hands: list[Hand], hero: str) -> dict[str, Any] | None:
         for f in _EVO_FIELDS:
             setattr(pooled, f, getattr(pooled, f) + getattr(ps, f))
     table = _stat_values(pooled, sum(v for p, v in wwsf.items() if p != hero))
-    blocks: dict[str, Any] = {}
-    for size in BLOCK_SIZES:
-        nb = len(deltas) // size
-        if len(deltas) - nb * size >= size // 2:
-            nb += 1  # a final block at least half full stands on its own
-        if nb < 2:
+
+    # Per-hand arrays, so a window is a weighted sum over a slice.
+    cols: dict[str, list[int]] = {f: [d[f] for d, _ in deltas] for f in _EVO_FIELDS}
+    col_w = [w for _, w in deltas]
+    cum = [0.0]
+    for v in net_bb:
+        cum.append(cum[-1] + v)
+
+    windows: dict[str, Any] = {}
+    for size in WINDOW_SIZES:
+        if n < 2 * size:
+            continue  # fewer than two windows' worth is not a trend
+        kern = _bell_kernel(size)
+        half = len(kern) // 2
+        step = max(1, size // WINDOW_STEPS)
+        centres = list(range(half, n - half, step))
+        if not centres:
             continue
-        b_stats: dict[str, list[float | None]] = {k: [] for k, _, _ in EVOLUTION_STATS}
-        b_net: list[float] = []
-        for bi in range(nb):
+        if centres[-1] != n - 1 - half:
+            centres.append(n - 1 - half)  # the last point always reaches the last hand
+        w_stats: dict[str, list[float | None]] = {k: [] for k, _, _ in EVOLUTION_STATS}
+        w_net: list[float] = []
+        w_cum: list[float] = []
+        ksum = sum(kern)
+        for c in centres:
+            lo, hi = c - half, c + half + 1
             acc = PlayerStats(player=hero, name=hero)
-            won = 0
-            for d, w in deltas[bi * size:(bi + 1) * size]:
-                for f, v in d.items():
-                    setattr(acc, f, getattr(acc, f) + v)
-                won += w
-            vals = _stat_values(acc, won)
-            for k in b_stats:
-                b_stats[k].append(vals[k])
-            b_net.append(round(sum(net_bb[bi * size:(bi + 1) * size]), 1))
-        seen_b: dict[int, str] = {}
-        for b, lab in zip(breaks, break_dates):
-            seen_b.setdefault(min(b // size, nb - 1), lab)
-        blocks[str(size)] = {
-            "size": size, "n": nb, "net": b_net, "stats": b_stats,
-            "hands": [min(len(deltas), (bi + 1) * size) for bi in range(nb)],
-            "breaks": sorted(seen_b),
-            "break_labels": [seen_b[k] for k in sorted(seen_b)],
+            for f in _EVO_FIELDS:
+                setattr(acc, f, sum(map(mul, kern, cols[f][lo:hi])))
+            vals = _stat_values(acc, sum(map(mul, kern, col_w[lo:hi])))
+            for k in w_stats:
+                w_stats[k].append(vals[k])
+            w_net.append(round(sum(map(mul, kern, net_bb[lo:hi])) / ksum * 100, 1))
+            w_cum.append(round(cum[c + 1], 1))
+        windows[str(size)] = {
+            "size": size, "step": step, "n": len(centres), "span": len(kern),
+            "idx": centres,  # hand index (0-based) each point is centred on
+            "net100": w_net, "cum": w_cum, "stats": w_stats,
         }
-    if not blocks:
+    if not windows:
         return None
     return {
-        "hands": len(deltas),
+        "hands": n,
         "stats": [{"key": k, "label": lab, "desc": desc, "table": table[k]} for k, lab, desc in EVOLUTION_STATS],
-        "blocks": blocks,
+        "windows": windows,
+        "breaks": breaks,
+        "break_labels": break_dates,
+        "big_pot_bb": BIG_POT_BB,
+        "big_pots": [{"i": i, "number": numbers[i], "net_bb": round(v, 1)} for i, v in enumerate(net_bb) if abs(v) >= BIG_POT_BB],
     }
 
 

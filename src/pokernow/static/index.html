@@ -145,6 +145,7 @@
   .evo .card { padding: 12px 14px 8px; border-radius: 3px; }
   .evo .hd { display: flex; justify-content: space-between; align-items: baseline; }
   .evo .hd b { font-size: 15px; }
+  .evo .hd .v.cmp { font-size: 15px; }
   .evo .hd .v { font-size: 20px; font-weight: 500; font-variant-numeric: tabular-nums lining-nums; letter-spacing: -.2px; }
   .evo .s { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
   .evo svg { width: 100%; height: 84px; display: block; overflow: visible; }
@@ -349,7 +350,7 @@
 <script>
 (() => {
   const $ = (s) => document.querySelector(s);
-  const state = { sid: null, summary: null, gameId: null, hands: [], sort: { key: 'net', dir: -1 }, filterPlayer: '', selectedHand: null, liveVersion: 0, liveTimer: null, hero: null, handsSort: { key: 'number', dir: 1 }, replayHtml: null, rp: null, rpTimer: null, rpPeek: {}, tab: 'overview', insights: null, insightsFor: null, evoBlock: 100, evoOverlay: ['vpip', 'wtsd'], trends: null, trendsFor: null, trendsPlayer: null, aggregate: null, nArchives: 0, nUploads: 0, archives: [], archivesSort: { key: 'started_at', dir: -1 }, rpShowAll: (() => { try { return localStorage.getItem('rpShowAll') !== '0'; } catch { return true; } })() };
+  const state = { sid: null, summary: null, gameId: null, hands: [], sort: { key: 'net', dir: -1 }, filterPlayer: '', selectedHand: null, liveVersion: 0, liveTimer: null, hero: null, handsSort: { key: 'number', dir: 1 }, replayHtml: null, rp: null, rpTimer: null, rpPeek: {}, tab: 'overview', insights: null, insightsFor: null, evoBlock: 100, evoOverlay: ['vpip', 'wtsd'], trends: null, trendsFor: null, trendsPlayer: null, trendsVs: null, trendsCmp: null, aggregate: null, nArchives: 0, nUploads: 0, archives: [], archivesSort: { key: 'started_at', dir: -1 }, rpShowAll: (() => { try { return localStorage.getItem('rpShowAll') !== '0'; } catch { return true; } })() };
   const DARK = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const COLORS = DARK
     ? ['#8fb0e0','#6f93b8','#9a9a9a','#5aa8a8','#c9a227','#c0605a','#9aa65a','#a98bc0','#b9cde6','#d0d0d0']
@@ -627,7 +628,7 @@
     uploadView.classList.add('hidden'); $('#dash').classList.remove('hidden');
     renderSummary(); renderMeSources(); renderPlayers(); renderChart();
     if (!keep) { $('#f-player').value = ''; $('#f-minpot').value = ''; $('#f-showdown').checked = false; state.selectedHand = null; state.replayHtml = null; }
-    state.insightsFor = null; state.trendsFor = null; state.trendsPlayer = null;
+    state.insightsFor = null; state.trendsFor = null; state.trendsPlayer = null; state.trendsVs = null; state.trendsCmp = null;
     if (state.tab === 'insights') loadInsights();
     if (state.tab === 'trends') loadTrends();
     await loadHands();
@@ -782,28 +783,43 @@
     if (state.tab === 'trends') loadTrends();
   }));
 
-  function evoCard(s, B) {
+  // Second player in the Trends compare mode: drawn in this colour, dashed,
+  // with hollow dots; the first player keeps the accent.
+  const CMP_COLOR = DARK ? '#e8a04c' : '#c76d1a';
+  function evoCard(s, B, B2) {
     const series = B.stats[s.key];
+    const series2 = B2 ? B2.stats[s.key] : null;
     const value = series[series.length - 1];
     const isAf = s.key === 'af';
     const fmtV = (v) => v == null ? '–' : isAf ? v.toFixed(2) : v.toFixed(1) + '%';
     const fmtT = (v) => isAf ? v.toFixed(1) : Math.round(v) + '%';
-    const head = `<div class="hd"><b>${s.label}</b><span class="v">${fmtV(value)}</span></div><div class="s">${s.desc}${s.table != null ? ` · table ${fmtV(s.table)}` : ''}</div>`;
+    const vHtml = series2
+      ? `<span class="v cmp"><span style="color:var(--accent)">${fmtV(value)}</span> <span class="muted">·</span> <span style="color:${CMP_COLOR}">${fmtV(series2[series2.length - 1])}</span></span>`
+      : `<span class="v">${fmtV(value)}</span>`;
+    const head = `<div class="hd"><b>${s.label}</b>${vHtml}</div><div class="s">${s.desc}${s.table != null ? ` · table ${fmtV(s.table)}` : ''}</div>`;
     const pts = series.map((v, i) => [i, v]).filter(x => x[1] != null);
+    const pts2 = series2 ? series2.map((v, i) => [i, v]).filter(x => x[1] != null) : [];
     if (pts.length < 2) return `<div class="card">${head}<div class="hl-empty">Not enough hands yet.</div></div>`;
     const W = 300, H = 84, L = 36, T = 6, Bm = 8;
-    const vals = pts.map(x => x[1]); if (s.table != null) vals.push(s.table);
+    const vals = pts.concat(pts2).map(x => x[1]); if (s.table != null) vals.push(s.table);
     let lo = Math.min(...vals), hi = Math.max(...vals);
     if (hi - lo < 1e-9) { hi += 1; lo = Math.max(0, lo - 1); }
     const pad = (hi - lo) * 0.1; const top = hi, bot = lo; lo = Math.max(0, lo - pad); hi += pad;
-    const n = series.length;
-    const x = (i) => L + (i + 0.5) / n * (W - L - 6);
+    // each player's blocks span the full width, so two players with different
+    // hand counts line up start-to-end rather than block-to-block
+    const xN = (i, n) => L + (i + 0.5) / n * (W - L - 6);
     const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - Bm);
-    const line = pts.map(q => `${x(q[0]).toFixed(1)},${y(q[1]).toFixed(1)}`).join(' ');
     const ref = s.table != null ? `<line x1="${L}" x2="${W - 6}" y1="${y(s.table).toFixed(1)}" y2="${y(s.table).toFixed(1)}" stroke="var(--muted)" stroke-dasharray="4 3" stroke-width="1" opacity=".8"><title>rest of the table: ${fmtV(s.table)}</title></line>` : '';
-    const dots = pts.map(q => `<circle cx="${x(q[0]).toFixed(1)}" cy="${y(q[1]).toFixed(1)}" r="2.4" fill="var(--accent)"><title>hands ${B.hands[q[0]] - B.size + 1}–${B.hands[q[0]]}: ${fmtV(q[1])}</title></circle>`).join('');
+    const trace = (P, Bk, color, second) => {
+      const n = Bk.stats[s.key].length;
+      const line = P.map(q => `${xN(q[0], n).toFixed(1)},${y(q[1]).toFixed(1)}`).join(' ');
+      const dots = P.map(q => `<circle cx="${xN(q[0], n).toFixed(1)}" cy="${y(q[1]).toFixed(1)}" r="2.4" fill="${second ? 'var(--bg)' : color}" stroke="${color}" stroke-width="${second ? 1.4 : 0}"><title>hands ${Bk.hands[q[0]] - Bk.size + 1}–${Bk.hands[q[0]]}: ${fmtV(q[1])}</title></circle>`).join('');
+      return `<polyline points="${line}" fill="none" stroke="${color}" stroke-width="1.5" ${second ? 'stroke-dasharray="5 3"' : ''} stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${dots}`;
+    };
+    let body = trace(pts, B, 'var(--accent)', false);
+    if (pts2.length >= 2) body += trace(pts2, B2, CMP_COLOR, true);
     const ax = [top, (top + bot) / 2, bot].map(v => `<text class="ax" x="${L - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end">${fmtT(v)}</text>`).join('');
-    return `<div class="card">${head}<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${ref}<polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${dots}${ax}</svg></div>`;
+    return `<div class="card">${head}<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${ref}${body}${ax}</svg></div>`;
   }
 
   const TR_KEY = 'trendsPrefs';
@@ -823,16 +839,19 @@
   const OV_COLORS = DARK
     ? { vpip: '#8fb0e0', pfr: '#c9a227', three_bet: '#a98bc0', af: '#5aa8a8', cbet: '#9aa65a', ftcb: '#b9cde6', wtsd: '#c0605a', wwsf: '#9a9a9a' }
     : { vpip: '#5b7fa6', pfr: '#a67c00', three_bet: '#7a5b8c', af: '#2a7f7f', cbet: '#6b7a2e', ftcb: '#9ab7d9', wtsd: '#7a2e2e', wwsf: '#8c8c8c' };
-  function evoOverlay(EV, B) {
+  function evoOverlay(EV, B, B2) {
     const net = B.net;
     const sel = EV.stats.filter(s => state.evoOverlay.includes(s.key));
     const pctSel = sel.filter(s => s.key !== 'af'), afSel = sel.find(s => s.key === 'af');
-    const n = net.length;
+    const n = net.length, n2 = B2 ? B2.net.length : 0;
     const W = 900, L = 44, R = 12, GAP = 14, HN = 120, HP = pctSel.length ? 150 : 0, HA = afSel ? 70 : 0;
     const hasBrk = (B.breaks || []).length > 0;
     const STRIP = hasBrk ? 16 : 0;
-    const H = 8 + STRIP + HN + (HP ? GAP + HP : 0) + (HA ? GAP + HA : 0) + 18;
-    const x = (i) => L + (i + 0.5) / n * (W - L - R);
+    const H = 8 + STRIP + HN + (HP ? GAP + HP : 0) + (HA ? GAP + HA : 0) + 18 + (B2 ? 12 : 0);
+    // every series spans the full width over its own block count, so in
+    // compare mode the two players line up start-to-end
+    const xN = (i, m) => L + (i + 0.5) / m * (W - L - R);
+    const x = (i) => xN(i, n);
     const chips = EV.stats.map(s => `<button data-ov="${s.key}" class="ov-chip ${state.evoOverlay.includes(s.key) ? 'on' : ''}" style="--c:${OV_COLORS[s.key]}"><i></i>${s.label}</button>`).join('');
     const panel = (top, h, series, fmt, zero) => {
       const vals = series.flatMap(sr => sr.pts.filter(v => v != null));
@@ -846,33 +865,46 @@
       g += [hi - pad, (hi + lo) / 2, lo + pad].map(v => `<text class="ax" x="${L - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end">${fmt(v)}</text>`).join('');
       if (zero && lo < 0 && hi > 0) g += `<line x1="${L}" x2="${W - R}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="var(--muted)" stroke-dasharray="3 3" opacity=".6"/>`;
       for (const sr of series) {
+        const m = sr.pts.length;
         const pts = sr.pts.map((v, i) => [i, v]).filter(q => q[1] != null);
-        const line = pts.map(q => `${x(q[0]).toFixed(1)},${y(q[1]).toFixed(1)}`).join(' ');
+        const line = pts.map(q => `${xN(q[0], m).toFixed(1)},${y(q[1]).toFixed(1)}`).join(' ');
         if (sr.bars) {
-          const bw = Math.min(40, Math.max(2, (W - L - R) / n * 0.6));
-          g += pts.map(q => { const yy = y(q[1]), y0 = y(0); return `<rect x="${(x(q[0]) - bw / 2).toFixed(1)}" y="${Math.min(yy, y0).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.abs(yy - y0).toFixed(1)}" fill="${q[1] >= 0 ? 'var(--pos)' : 'var(--neg)'}" opacity=".8"/>`; }).join('');
+          const bw = Math.min(40, Math.max(2, (W - L - R) / m * 0.6));
+          g += pts.map(q => { const yy = y(q[1]), y0 = y(0); return `<rect x="${(xN(q[0], m) - bw / 2).toFixed(1)}" y="${Math.min(yy, y0).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.abs(yy - y0).toFixed(1)}" fill="${q[1] >= 0 ? 'var(--pos)' : 'var(--neg)'}" opacity=".8"/>`; }).join('');
           continue;
         }
-        if (sr.dots) g += pts.map(q => `<circle cx="${x(q[0]).toFixed(1)}" cy="${y(q[1]).toFixed(1)}" r="2.6" fill="${sr.color}"/>`).join('');
-        if (sr.area) g += `<polygon points="${x(pts[0][0]).toFixed(1)},${y(0).toFixed(1)} ${line} ${x(pts[pts.length - 1][0]).toFixed(1)},${y(0).toFixed(1)}" fill="${sr.color}" opacity=".12"/>`;
-        g += `<polyline points="${line}" fill="none" stroke="${sr.color}" stroke-width="${sr.area ? 2 : 1.6}" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+        if (sr.dots) g += pts.map(q => sr.second
+          ? `<circle cx="${xN(q[0], m).toFixed(1)}" cy="${y(q[1]).toFixed(1)}" r="2.6" fill="var(--bg)" stroke="${sr.color}" stroke-width="1.4"/>`
+          : `<circle cx="${xN(q[0], m).toFixed(1)}" cy="${y(q[1]).toFixed(1)}" r="2.6" fill="${sr.color}"/>`).join('');
+        if (sr.area) g += `<polygon points="${xN(pts[0][0], m).toFixed(1)},${y(0).toFixed(1)} ${line} ${xN(pts[pts.length - 1][0], m).toFixed(1)},${y(0).toFixed(1)}" fill="${sr.color}" opacity=".12"/>`;
+        g += `<polyline points="${line}" fill="none" stroke="${sr.color}" stroke-width="${sr.area ? 2 : sr.second ? 1.5 : 1.6}" ${sr.second ? 'stroke-dasharray="5 3"' : ''} stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
       }
       return { svg: g, y };
     };
+    const cumOf = (arr) => { let c = 0; return arr.map(v => (c += v)); };
     const yN = 8 + STRIP;
-    const pN = panel(yN, HN, [{ pts: net, bars: true }], v => Math.round(v) + ' bb', true);
-    let svg = pN.svg;
-    {  // ghost of the cumulative level, scaled to its own range, so the slope reads against the bars
-      let c = 0; const cum = net.map(v => (c += v));
+    let svg = '';
+    if (B2) {
+      // two players: the cumulative lines share one scale, no bars
+      const pN = panel(yN, HN, [{ pts: cumOf(net), color: 'var(--accent)', dots: true }, { pts: cumOf(B2.net), color: CMP_COLOR, dots: true, second: true }], v => Math.round(v) + ' bb', true);
+      svg = pN.svg;
+    } else {
+      const pN = panel(yN, HN, [{ pts: net, bars: true }], v => Math.round(v) + ' bb', true);
+      svg = pN.svg;
+      // ghost of the cumulative level, scaled to its own range, so the slope reads against the bars
+      const cum = cumOf(net);
       const lo = Math.min(0, ...cum), hi = Math.max(0, ...cum);
       const yc = (v) => yN + (1 - (v - lo) / ((hi - lo) || 1)) * HN;
       svg += `<polyline points="${cum.map((v, i) => `${x(i).toFixed(1)},${yc(v).toFixed(1)}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="3 3" opacity=".7" vector-effect="non-scaling-stroke"/>`;
     }
+    const both = (key) => B2
+      ? [{ pts: B.stats[key], color: OV_COLORS[key], dots: true }, { pts: B2.stats[key], color: OV_COLORS[key], dots: true, second: true }]
+      : [{ pts: B.stats[key], color: OV_COLORS[key], dots: true }];
     const yP = yN + HN + GAP;
-    const pP = HP ? panel(yP, HP, pctSel.map(s => ({ pts: B.stats[s.key], color: OV_COLORS[s.key], dots: true })), v => Math.round(v) + '%') : null;
+    const pP = HP ? panel(yP, HP, pctSel.flatMap(s => both(s.key)), v => Math.round(v) + '%') : null;
     if (pP) svg += pP.svg;
     const yA = yP + (HP ? HP + GAP : 0);
-    const pA = HA ? panel(yA, HA, [{ pts: B.stats.af, color: OV_COLORS.af, dots: true }], v => v.toFixed(1)) : null;
+    const pA = HA ? panel(yA, HA, both('af'), v => v.toFixed(1)) : null;
     if (pA) svg += pA.svg;
     const bottom = yA + HA;
     const brk = B.breaks || [], brkLab = B.break_labels || [];
@@ -880,29 +912,47 @@
     // date labels on the breaks, thinned so they never overlap (≈34px per label)
     let lastLx = -1e9;
     brk.forEach((b, i) => { const lx = x(b); if (lx - lastLx >= 36 && lx <= W - R - 30) { svg += `<text class="ax" x="${(lx + 2).toFixed(1)}" y="${yN - 5}">${esc(brkLab[i] || '')}</text>`; lastLx = lx; } });
-    // hand-count ticks along the bottom
-    const handAt = (i) => B.hands[i];
-    const ticks = [0, Math.round((n - 1) / 4), Math.round((n - 1) / 2), Math.round(3 * (n - 1) / 4), n - 1].filter((v, i, a) => a.indexOf(v) === i);
-    svg += ticks.map((i, j) => `<text class="ax" x="${x(i).toFixed(1)}" y="${bottom + 14}" text-anchor="${j === 0 ? 'start' : j === ticks.length - 1 ? 'end' : 'middle'}">${handAt(i) - B.size + 1}–${handAt(i)}</text>`).join('');
+    // hand-count ticks along the bottom; in compare mode one row per player, in their colours
+    const tickRow = (Bk, m, yy, color) => {
+      const ticks = [0, Math.round((m - 1) / 4), Math.round((m - 1) / 2), Math.round(3 * (m - 1) / 4), m - 1].filter((v, i, a) => a.indexOf(v) === i);
+      return ticks.map((i, j) => `<text class="ax" x="${xN(i, m).toFixed(1)}" y="${yy}" text-anchor="${j === 0 ? 'start' : j === ticks.length - 1 ? 'end' : 'middle'}"${color ? ` fill="${color}"` : ''}>${Bk.hands[i] - Bk.size + 1}–${Bk.hands[i]}</text>`).join('');
+    };
+    svg += tickRow(B, n, bottom + 14, B2 ? 'var(--accent)' : null);
+    if (B2) svg += tickRow(B2, n2, bottom + 26, CMP_COLOR);
     svg += `<g class="ov-cursor" style="display:none"><line y1="${yN}" y2="${bottom}" stroke="var(--ink)" opacity=".5"/></g><rect class="ov-hit" x="${L}" y="${yN}" width="${W - L - R}" height="${bottom - yN}" fill="transparent"/>`;
-    const title = `Net per block of ${B.size} hands (bb) · dashed line is the cumulative level`;
-    return `<div class="card ov-card" data-n="${n}" data-l="${L}" data-w="${W}" data-r="${R}"><div class="hd"><b>Overlay</b><span class="s">${title} on top · pick the stats to lay underneath · dotted verticals are new sittings · hover to read values</span></div><div class="ov-chips">${chips}</div><div class="ov-wrap"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${svg}</svg><div class="ov-tip" style="display:none"></div></div></div>`;
+    const title = B2
+      ? `Cumulative net (bb) of both players, each over their own ${B.size}-hand blocks stretched to the same width`
+      : `Net per block of ${B.size} hands (bb) · dashed line is the cumulative level`;
+    return `<div class="card ov-card" data-n="${n}" data-n2="${n2}" data-l="${L}" data-w="${W}" data-r="${R}"><div class="hd"><b>Overlay</b><span class="s">${title} on top · pick the stats to lay underneath · dotted verticals are new sittings${B2 ? ' of the first player · dashed traces are the second player' : ''} · hover to read values</span></div><div class="ov-chips">${chips}</div><div class="ov-wrap"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${svg}</svg><div class="ov-tip" style="display:none"></div></div></div>`;
   }
   function bindOverlayHover() {
     const card = $('#tr-root .ov-card'); if (!card) return;
     const EV = state.trends.evolution, B = EV.blocks[String(state.evoBlock)];
+    const d2 = state.trendsCmp, EV2 = d2 && d2.evolution, B2 = EV2 ? EV2.blocks[String(state.evoBlock)] : null;
     const svg = card.querySelector('svg'), cur = svg.querySelector('.ov-cursor line'), tip = card.querySelector('.ov-tip');
-    const n = +card.dataset.n, L = +card.dataset.l, W = +card.dataset.w, R = +card.dataset.r;
+    const n = +card.dataset.n, n2 = +card.dataset.n2, L = +card.dataset.l, W = +card.dataset.w, R = +card.dataset.r;
     const net = B.net;
     const sel = EV.stats.filter(s => state.evoOverlay.includes(s.key));
+    const fmtS = (s, v) => v == null ? '–' : s.key === 'af' ? v.toFixed(2) : v.toFixed(1) + '%';
+    const cumAt = (arr, i) => arr.slice(0, i + 1).reduce((a, b2) => a + b2, 0);
     svg.addEventListener('mousemove', (e) => {
       const rect = svg.getBoundingClientRect();
       const px = (e.clientX - rect.left) / rect.width * W;
-      const i = Math.max(0, Math.min(n - 1, Math.floor((px - L) / (W - L - R) * n)));
+      const frac = Math.max(0, Math.min(1 - 1e-9, (px - L) / (W - L - R)));
+      const i = Math.floor(frac * n);
       const xv = L + (i + 0.5) / n * (W - L - R);
       cur.parentNode.style.display = ''; cur.setAttribute('x1', xv); cur.setAttribute('x2', xv);
-      const rowsT = [`<div><span style="color:var(--accent)">■</span> hands ${B.hands[i] - B.size + 1}–${B.hands[i]} · net <b class="${cls(net[i])}">${signed(net[i].toFixed(0))} bb</b> <span class="muted">(${signed((net[i] / B.size * 100).toFixed(0))} bb/100)</span></div>`]
-        .concat(sel.map(s => { const v = B.stats[s.key][i]; return `<div><span style="color:${OV_COLORS[s.key]}">■</span> ${s.label} <b>${v == null ? '–' : s.key === 'af' ? v.toFixed(2) : v.toFixed(1) + '%'}</b></div>`; }));
+      let rowsT;
+      if (B2 && n2) {
+        const j = Math.floor(frac * n2);
+        const who = (p) => esc(short(p));
+        rowsT = [`<div><span style="color:var(--accent)">■</span> ${who(state.trends.player)} · hands ${B.hands[i] - B.size + 1}–${B.hands[i]} · block <b class="${cls(net[i])}">${signed(net[i].toFixed(0))} bb</b> · cumulative <b class="${cls(cumAt(net, i))}">${signed(cumAt(net, i).toFixed(0))} bb</b></div>`,
+          `<div><span style="color:${CMP_COLOR}">■</span> ${who(d2.player)} · hands ${B2.hands[j] - B2.size + 1}–${B2.hands[j]} · block <b class="${cls(B2.net[j])}">${signed(B2.net[j].toFixed(0))} bb</b> · cumulative <b class="${cls(cumAt(B2.net, j))}">${signed(cumAt(B2.net, j).toFixed(0))} bb</b></div>`]
+          .concat(sel.map(s => `<div><span style="color:${OV_COLORS[s.key]}">■</span> ${s.label} <b style="color:var(--accent)">${fmtS(s, B.stats[s.key][i])}</b> <span class="muted">·</span> <b style="color:${CMP_COLOR}">${fmtS(s, B2.stats[s.key][j])}</b></div>`));
+      } else {
+        rowsT = [`<div><span style="color:var(--accent)">■</span> hands ${B.hands[i] - B.size + 1}–${B.hands[i]} · net <b class="${cls(net[i])}">${signed(net[i].toFixed(0))} bb</b> <span class="muted">(${signed((net[i] / B.size * 100).toFixed(0))} bb/100)</span></div>`]
+          .concat(sel.map(s => `<div><span style="color:${OV_COLORS[s.key]}">■</span> ${s.label} <b>${fmtS(s, B.stats[s.key][i])}</b></div>`));
+      }
       tip.innerHTML = rowsT.join('');
       tip.style.display = '';
       const left = (e.clientX - rect.left); tip.style.left = (left > rect.width * 0.6 ? left - tip.offsetWidth - 12 : left + 12) + 'px';
@@ -940,11 +990,15 @@
     const who = state.trendsPlayer || state.hero || (state.summary.players[0] && state.summary.players[0].player);
     if (!who) { $('#tr-root').innerHTML = '<div class="muted" style="padding:20px">No players.</div>'; return; }
     state.trendsPlayer = who;
-    const key = state.sid + ':' + who + ':' + (state.summary ? state.summary.hands : 0);
+    if (state.trendsVs === who) state.trendsVs = null;
+    const vs = state.trendsVs || '';
+    const key = state.sid + ':' + who + ':' + vs + ':' + (state.summary ? state.summary.hands : 0);
     if (state.trendsFor === key && state.trends) { renderTrends(); return; }
     $('#tr-root').innerHTML = '<div class="muted" style="padding:20px">Computing…</div>';
     try {
-      state.trends = await api(`/api/sessions/${state.sid}/trends?player=${encodeURIComponent(who)}`);
+      const get = (p) => api(`/api/sessions/${state.sid}/trends?player=${encodeURIComponent(p)}`);
+      const [a, b2] = await Promise.all([get(who), vs ? get(vs) : Promise.resolve(null)]);
+      state.trends = a; state.trendsCmp = b2;
       state.trendsFor = key;
       renderTrends();
     } catch (e) {
@@ -956,22 +1010,34 @@
     const d = state.trends; if (!d) return;
     const EV = d.evolution;
     const players = [...state.summary.players].sort((a, b2) => b2.hands - a.hands);
-    const sel = `<select id="tr-player" class="tr-select">${players.map(p => `<option value="${esc(p.player)}" ${p.player === d.player ? 'selected' : ''}>${esc(p.name)}${p.player === state.hero ? ' (you)' : ''} · ${p.hands} hands</option>`).join('')}</select>`;
+    const d2 = state.trendsCmp, EV2 = d2 && d2.evolution;
+    const optName = (p) => `${esc(p.name)}${p.player === state.hero ? ' (you)' : ''} · ${p.hands} hands`;
+    const sel = `<select id="tr-player" class="tr-select"${d2 ? ' style="border-color:var(--accent)"' : ''}>${players.map(p => `<option value="${esc(p.player)}" ${p.player === d.player ? 'selected' : ''}>${optName(p)}</option>`).join('')}</select>`;
+    const selVs = `<span class="seg"><span class="tr-sub">vs</span><select id="tr-vs" class="tr-select"${d2 ? ` style="border-color:${CMP_COLOR}"` : ''}><option value="">nobody</option>${players.filter(p => p.player !== d.player).map(p => `<option value="${esc(p.player)}" ${d2 && p.player === d2.player ? 'selected' : ''}>${optName(p)}</option>`).join('')}</select></span>`;
     let html = '';
     if (!EV) {
-      html = `<section><div class="tr-bar">${sel}</div><div class="muted" style="padding:20px">Fewer than 200 hands: not enough for a trend.</div></section>`;
+      html = `<section><div class="tr-bar">${sel}${selVs}</div><div class="muted" style="padding:20px">Fewer than 200 hands: not enough for a trend.</div></section>`;
     } else {
       const sizes = Object.keys(EV.blocks).map(Number).sort((a, b2) => a - b2);
       if (!EV.blocks[String(state.evoBlock)]) state.evoBlock = sizes[0];
       const B = EV.blocks[String(state.evoBlock)];
+      // the second player needs the same block size; otherwise they only get a note
+      const B2 = EV2 ? EV2.blocks[String(state.evoBlock)] || null : null;
       const sb = sizes.map(z => `<button data-evoblock="${z}" class="${state.evoBlock === z ? 'active' : ''}" title="${EV.blocks[String(z)].n} blocks">${z}</button>`).join('');
-      html = `<section><div class="tr-bar">${sel}<span class="seg"><span class="tr-sub">Blocks of</span>${sb}</span><span class="tr-sub">${EV.hands} hands · ${B.n} independent blocks · dashed line is the rest of the table pooled</span></div>`
-        + `<div class="evo">${EV.stats.map(s => evoCard(s, B)).join('')}</div>${evoOverlay(EV, B)}</section>`;
-      html += `<div class="ins-note">Each point is one block of ${B.size} of the player's hands scored on its own, so a change shows where it happened. At ${B.size} hands VPIP and WTSD carry a sampling error of about ${B.size >= 200 ? 3.5 : 5} points and net about ${B.size >= 200 ? 175 : 250} bb per block, so read single points with care and look for runs.</div>`;
+      const legend = B2
+        ? `<span class="tr-sub"><span style="color:var(--accent)">■</span> ${esc(short(d.player))} ${EV.hands} hands · <span style="color:${CMP_COLOR}">■</span> ${esc(short(d2.player))} ${EV2.hands} hands · ${B.n} vs ${B2.n} blocks · dashed grey is the rest of the table pooled, from ${esc(short(d.player))}'s view</span>`
+        : `<span class="tr-sub">${EV.hands} hands · ${B.n} independent blocks · dashed line is the rest of the table pooled</span>`;
+      const cmpNote = d2 && !B2
+        ? `<div class="muted" style="padding:6px 0 10px">${esc(short(d2.player))} has ${EV2 ? 'too few hands for blocks of ' + state.evoBlock : 'fewer than 200 hands'}: nothing to compare at this block size.</div>`
+        : '';
+      html = `<section><div class="tr-bar">${sel}${selVs}<span class="seg"><span class="tr-sub">Blocks of</span>${sb}</span>${legend}</div>${cmpNote}`
+        + `<div class="evo">${EV.stats.map(s => evoCard(s, B, B2)).join('')}</div>${evoOverlay(EV, B, B2)}</section>`;
+      html += `<div class="ins-note">Each point is one block of ${B.size} of the player's hands scored on its own, so a change shows where it happened. At ${B.size} hands VPIP and WTSD carry a sampling error of about ${B.size >= 200 ? 3.5 : 5} points and net about ${B.size >= 200 ? 175 : 250} bb per block, so read single points with care and look for runs.${B2 ? ' In compare mode each player\'s blocks are stretched to the same width, so a point lines up with the other player\'s point at the same fraction of their hands, not the same night.' : ''}</div>`;
     }
     const root = $('#tr-root');
     root.innerHTML = html;
     const ps = root.querySelector('#tr-player'); if (ps) ps.addEventListener('change', () => { state.trendsPlayer = ps.value; loadTrends(); });
+    const pv = root.querySelector('#tr-vs'); if (pv) pv.addEventListener('change', () => { state.trendsVs = pv.value || null; loadTrends(); });
     const rerender = () => { saveTrendPrefs(); renderTrends(); };
     root.querySelectorAll('[data-evoblock]').forEach(el => el.addEventListener('click', () => { state.evoBlock = +el.dataset.evoblock; rerender(); }));
     root.querySelectorAll('[data-ov]').forEach(el => el.addEventListener('click', () => {

@@ -426,12 +426,18 @@ def _hand_luck(hand: Hand) -> dict[str, dict[str, Any]] | None:
     betting *after* a card falls are decisions, not luck, and are never
     attributed here.
 
+    Run-it-twice (or three times) boards are scored too: each run settles
+    1/k of the pot, so the cards shared by every run (dealt before the money
+    went in) are priced once on the full pot and each run's own cards on
+    pot / k. Double-board bomb pots are left out: there both boards are
+    dealt from the start and the betting is on both at once.
+
     Measured between the showdown survivors whose hole cards are known.
     Returns None when the hand can't be measured (fewer than 2 known
-    survivors, no full board, or multi-run boards)."""
+    survivors, no full board, or a double board)."""
     if not hand.went_to_showdown or len(hand.board) < 5:
         return None
-    if len(hand.board_runs) > 1 or hand.double_board:
+    if hand.double_board:
         return None
     survivors = hand.survivors
     known: dict[str, list[int]] = {}
@@ -446,7 +452,21 @@ def _hand_luck(hand: Hand) -> dict[str, dict[str, Any]] | None:
     board = [c for c in (card_int(c) for c in hand.board) if c is not None]
     if len(board) < 5:
         return None
-    if any(c in board for cs in known.values() for c in cs):
+    # every run as a full five-card board; the JSON log stores a later run as
+    # just the cards dealt after the split, so complete it from the first run
+    runs: list[list[int]] = []
+    for raw_run in hand.board_runs or [hand.board]:
+        run = [c for c in (card_int(c) for c in raw_run) if c is not None]
+        if len(run) < 5:
+            run = board[: 5 - len(run)] + run
+        if len(run) != 5:
+            return None
+        runs.append(run)
+    k = len(runs)
+    shared = 0  # cards (from the left) identical across every run
+    while shared < 5 and all(r[shared] == board[shared] for r in runs):
+        shared += 1
+    if any(c in r for cs in known.values() for c in cs for r in runs):
         return None  # corrupted data: a hole card also appears on the board
     # pot as it stood when each street's cards were revealed
     put_by_street = {Street.PREFLOP: 0, Street.FLOP: 0, Street.TURN: 0, Street.RIVER: 0}
@@ -464,18 +484,36 @@ def _hand_luck(hand: Hand) -> dict[str, dict[str, Any]] | None:
         return None
     players = list(known)
     holes = [known[p] for p in players]
-    eq_pre = equities(holes, [])
-    eq_flop = equities(holes, board[:3])
-    eq_turn = equities(holes, board[:4])
-    eq_river = equities(holes, board[:5])  # resolves to the actual result
+    eq_cache: dict[tuple[int, ...], list[float]] = {}
+
+    def eq(prefix: list[int]) -> list[float]:
+        key = tuple(prefix)
+        if key not in eq_cache:
+            eq_cache[key] = equities(holes, prefix)
+        return eq_cache[key]
+
+    eq_pre = eq([])
+    eq_flop = eq(board[:3])
+    eq_turn = eq(board[:4])
+    # the actual result: on one board the final equity; on k runs the mean,
+    # since each run paid out 1/k of the pot
+    eq_river = [sum(eq(r)[i] for r in runs) / k for i in range(len(players))]
     eq_by_street = {Street.PREFLOP: eq_pre, Street.FLOP: eq_flop, Street.TURN: eq_turn, Street.RIVER: eq_river}
+    pot_by_len = {3: pot_at_flop, 4: pot_at_turn, 5: pot_at_river}
+    # luck per player: each reveal's equity swing × the pot riding on it. A
+    # street dealt once (within the shared prefix) rides on the whole pot;
+    # a street dealt per run rides on pot / k in each run.
+    luck_by_player = [0.0] * len(players)
+    for n_before, n in ((0, 3), (3, 4), (4, 5)):
+        dealt_in = runs[:1] if n <= shared else runs
+        weight = pot_by_len[n] / len(dealt_in)
+        for r in dealt_in:
+            before, after = eq(r[:n_before]), eq(r[:n])
+            for i in range(len(players)):
+                luck_by_player[i] += (after[i] - before[i]) * weight
     out: dict[str, dict[str, Any]] = {}
     for i, p in enumerate(players):
-        luck = (
-            (eq_flop[i] - eq_pre[i]) * pot_at_flop
-            + (eq_turn[i] - eq_flop[i]) * pot_at_turn
-            + (eq_river[i] - eq_turn[i]) * pot_at_river
-        )
+        luck = luck_by_player[i]
         commit = _commit_street(hand, p)  # the street where their money went in
         prefix = board[: _STREET_BOARD_LEN[commit]]
         eq_c = eq_by_street[commit]
@@ -1001,7 +1039,7 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
                 # that compares fairly across players (see below)
                 "allin_n": 0,
                 "allin_luck": 0.0,
-                "allin_unmeasured_n": 0,  # all-in showdowns not scored (run it twice)
+                "allin_unmeasured_n": 0,  # all-in showdowns not scored (double board, cards missing)
                 "net": 0,
             },
         )
@@ -1013,8 +1051,10 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
     # the loser mucks. Summed over shown hands the hero therefore reads
     # unlucky and the villains lucky, whatever actually happened. Once a
     # player is all in and called the cards go face up regardless of the
-    # outcome, so all-in luck has no such bias; the only all-in showdowns
-    # left out are run-it-twice hands, which are skipped whoever won.
+    # outcome, so all-in luck has no such bias. Run-it-twice boards are
+    # scored (each run on its share of the pot, see _hand_luck); the all-in
+    # showdowns still left out are double-board bomb pots and hands whose
+    # survivors' cards never reached the log, skipped whoever won.
     nets: dict[str, int] = {}
     luck_bb: dict[str, float] = {}
     for h in hands:

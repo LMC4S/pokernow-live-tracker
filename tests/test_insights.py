@@ -488,29 +488,60 @@ def test_money_luck_separates_allin_from_mucked_showdowns():
     assert alice["unmeasured_net"] > 0 > bob["unmeasured_net"]
 
 
-def test_run_it_twice_allin_is_counted_as_unscored():
-    """A run-it-twice all-in showdown cannot be scored, but it is skipped
-    whoever won, so it is reported next to the all-in count rather than
-    folded into the mucked-hand gap."""
+def _rit_json(run2_turn, run2_river, run2_winner_seat):
+    """Hand 1 of _session_json (AA vs AJs, all in on the flop) run twice: the
+    first run is the original 3d Ts, the second run's turn and river given."""
     raw = json.loads(_session_json())
     h = raw["hands"][0]
-    h["id"] = "h1-rit"  # the luck cache is keyed by hand id
+    h["id"] = f"h1-rit-{run2_turn}{run2_river}-{run2_winner_seat}"  # the luck cache is keyed by hand id
     t = h["startedAt"]
-    # second run of the turn and river after the all-in
-    h["events"] = [e for e in h["events"] if e["payload"].get("type") not in (9,)] + [
+    h["events"] = [e for e in h["events"] if e["payload"].get("type") not in (9, 10)] + [
         _ev(t + 5, type=9, turn=1, run=1, cards=["Kh", "Qd", "2c"]),
         _ev(t + 8, type=9, turn=2, run=1, cards=["3d"]),
         _ev(t + 9, type=9, turn=3, run=1, cards=["Ts"]),
-        _ev(t + 8, type=9, turn=2, run=2, cards=["4d"]),
-        _ev(t + 9, type=9, turn=3, run=2, cards=["5s"]),
+        _ev(t + 8, type=9, turn=2, run=2, cards=[run2_turn]),
+        _ev(t + 9, type=9, turn=3, run=2, cards=[run2_river]),
+        # each run pays out half the pot
+        _ev(t + 12, type=10, pot=1000, seat=2, value=500, cards=["Ac", "Jc"], position=2, runNumber="1", hiLo="h"),
+        _ev(t + 13, type=10, pot=1000, seat=run2_winner_seat, value=500, position=1, runNumber="2", hiLo="h"),
     ]
     h["events"].sort(key=lambda e: e["at"])
-    session = parse_text(json.dumps(raw), source_name="rit.json")
-    if len(session.hands[0].board_runs) < 2:
-        import pytest
-        pytest.skip("fixture did not parse as a multi-run board")
+    return json.dumps(raw)
+
+
+def test_run_it_twice_allin_is_scored_per_run():
+    """A run-it-twice all-in showdown is scored: the flop (shared by both
+    runs) rides on the whole pot, each run's turn and river on half of it.
+    The hand counts as one all-in showdown, not as an unscored one."""
+    session = parse_text(_rit_json("4d", "5s", 1), source_name="rit.json")
+    h = session.hands[0]
+    assert len(h.board_runs) == 2 and h.run_it_twice
     ins = compute_insights(session, big_blind=10)
     alice = next(v for k, v in ins["luck"].items() if k.startswith("Alice"))
-    assert alice["measured"] == 0
-    assert alice["allin_n"] == 0
-    assert alice["allin_unmeasured_n"] == 1
+    bob = next(v for k, v in ins["luck"].items() if k.startswith("Bob"))
+    assert alice["measured"] == alice["allin_n"] == 1
+    assert alice["allin_unmeasured_n"] == bob["allin_unmeasured_n"] == 0
+    assert alice["luck"] + bob["luck"] == 0
+
+    # expected by hand: 60 in the pot when the flop came, 1000 once all in
+    aa, aj = cards_int(["Ah", "Ad"]), cards_int(["Ac", "Jc"])
+    flop = [card_int(c) for c in ("Kh", "Qd", "2c")]
+
+    def e(board):
+        return equities([aa, aj], board)[0]
+
+    expected = (e(flop) - e([])) * 60
+    for turn, river in (("3d", "Ts"), ("4d", "5s")):  # one run lost, one won
+        t_, r_ = [card_int(turn)], [card_int(river)]
+        expected += (e(flop + t_) - e(flop)) * 500 + (e(flop + t_ + r_) - e(flop + t_)) * 500
+    assert alice["luck"] == round(expected)
+    # one run each way: the pot was chopped, so this is not a big loss
+    assert alice["net"] == -10  # hand 1 chopped, hand 2 blind folded
+    assert all(v["n"] == 0 for v in alice["big_loss"].values())
+
+    # identical runs score exactly like the single board
+    once = compute_insights(parse_text(_session_json(), source_name="once.json"), big_blind=10)
+    twice = compute_insights(parse_text(_rit_json("3d", "Ts", 2), source_name="same.json"), big_blind=10)
+    a1 = next(v for k, v in once["luck"].items() if k.startswith("Alice"))
+    a2 = next(v for k, v in twice["luck"].items() if k.startswith("Alice"))
+    assert a2["luck"] == a1["luck"] and a2["allin_luck"] == a1["allin_luck"]

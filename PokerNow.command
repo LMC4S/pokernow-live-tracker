@@ -45,6 +45,23 @@ if [ ! -x "$DIR/.venv/bin/pokernow" ]; then
   fi
 fi
 
+# stop servers left by earlier double-clicks and close their Terminal windows
+OLD_PIDS="$(pgrep -f "$DIR/.venv/bin/pokernow serve" || true)"
+if [ -n "$OLD_PIDS" ]; then
+  echo "  stopping the copy that was already running…"
+  OLD_TTYS="$(for p in $OLD_PIDS; do ps -o tty= -p "$p" 2>/dev/null; done | grep -v '?' | sed 's|^ *|/dev/|' | sort -u)"
+  kill $OLD_PIDS 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$DIR/.venv/bin/pokernow serve" >/dev/null || break; sleep 0.3; done
+  pkill -9 -f "$DIR/.venv/bin/pokernow serve" 2>/dev/null || true
+  for t in $OLD_TTYS; do
+    osascript -e 'tell application "Terminal"
+      repeat with w in (every window)
+        if (count of tabs of w) is 1 and tty of tab 1 of w is "'"$t"'" then close w
+      end repeat
+    end tell' >/dev/null 2>&1 || true
+  done
+fi
+
 # pick a free port if the default is busy
 while lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do PORT=$((PORT+1)); done
 

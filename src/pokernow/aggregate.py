@@ -14,7 +14,9 @@ regular with a new nickname every week is still one row. IDs that change
 between sessions (new device, no login) stay separate — nothing in the data
 links them, and guessing would be worse than a duplicate row — unless you say
 so: ``merge_sessions(..., same=[[id, id, ...], ...])`` takes groups of IDs
-that are one person (the app keeps them in ``identities.json``).
+that are one person (the app keeps them in ``identities.json``). Display
+names follow the latest nickname a person used, unless ``names={id: name}``
+pins one ("jAck" shows as "Jack" everywhere; any ID of the person will do).
 """
 
 from __future__ import annotations
@@ -66,6 +68,7 @@ class Aggregate:
     sources: list[SourceReport]
     big_blinds: list[int] = field(default_factory=list)
     same: list[dict[str, Any]] = field(default_factory=list)  # manual "same person" groups, as applied
+    names: dict[str, str] = field(default_factory=dict)  # pinned display names, by player ID
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +78,7 @@ class Aggregate:
             "big_blinds": self.big_blinds,
             "sources": [s.to_dict() for s in self.sources],
             "same": self.same,
+            "names": self.names,
         }
 
 
@@ -97,6 +101,13 @@ def _rep_of(groups: list[list[str]]):
             if a != b:
                 parent[b] = a
     return lambda pid: find(pid) if pid in parent else pid
+
+
+def _pinned_names(rep, names: dict[str, str] | None):
+    """``name_for(pid)``: the display name pinned for that person (by any of
+    their IDs), or None to keep the latest nickname."""
+    by_rep = {rep(i): n.strip() for i, n in (names or {}).items() if i and n and n.strip()}
+    return lambda pid: by_rep.get(rep(pid))
 
 
 def _ts(t: datetime | None) -> datetime:
@@ -138,15 +149,18 @@ def _keys_of(session: Session, is_mine) -> set[str]:
     return out
 
 
-def apply_identities(session: Session, same: list[list[str]] | None) -> list[dict[str, Any]]:
+def apply_identities(session: Session, same: list[list[str]] | None,
+                     names: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """Collapse the manual "same person" groups inside one session, so a
     player who switched devices mid-night is one row here too, not only in
     the all-sessions merge. The key they last played under wins; the others
-    become aliases (shown as aka). Returns the groups that actually merged
-    something, in the same shape ``merge_sessions`` reports."""
-    if not same:
+    become aliases (shown as aka). ``names`` pins display names by player ID.
+    Returns the groups that actually merged something, in the same shape
+    ``merge_sessions`` reports."""
+    if not same and not names:
         return []
-    rep = _rep_of(same)
+    rep = _rep_of(same or [])
+    name_for = _pinned_names(rep, names)
     latest: dict[str, str] = {}  # rep -> last key seen
     members: dict[str, dict[str, None]] = {}
     for h in session.hands:
@@ -155,7 +169,11 @@ def apply_identities(session: Session, same: list[list[str]] | None) -> list[dic
             if pid:
                 latest[rep(pid)] = st.player
                 members.setdefault(rep(pid), {})[st.player] = None
-    canon_of = {k: latest[r] for r, ks in members.items() if len(ks) > 1 for k in ks}
+    for r, key in latest.items():
+        pinned = name_for(_split_key(key)[1])
+        if pinned:
+            latest[r] = f"{pinned} @ {_split_key(key)[1]}"
+    canon_of = {k: latest[r] for r, ks in members.items() for k in ks if latest[r] != k}
     if not canon_of:
         return []
 
@@ -167,15 +185,16 @@ def apply_identities(session: Session, same: list[list[str]] | None) -> list[dic
         if old != new:
             session.aliases[old] = new
     applied = []
-    for g in same:
+    for g in same or []:
         reps = {rep(i) for i in g if i}
-        keys = sorted(k for r in reps for k in members.get(r, {}) if k in canon_of)
+        keys = sorted(k for r in reps for k in members.get(r, {}))
         if len({_split_key(k)[1] for k in keys}) >= 2:
-            applied.append({"ids": [i for i in g if i], "as": canon_of[keys[0]], "members": keys})
+            applied.append({"ids": [i for i in g if i], "as": canon(keys[0]), "members": keys})
     return applied
 
 
-def merge_sessions(sources: list[Source], same: list[list[str]] | None = None) -> Aggregate:
+def merge_sessions(sources: list[Source], same: list[list[str]] | None = None,
+                   names: dict[str, str] | None = None) -> Aggregate:
     """Merge every source where you can be identified into one session.
 
     Hands are deduplicated by PokerNow hand id (an uploaded log and a fetched
@@ -185,10 +204,11 @@ def merge_sessions(sources: list[Source], same: list[list[str]] | None = None) -
     with the latest name they used. Old keys are recorded as aliases so the
     UI can show "aka …". ``same`` lists groups of IDs that are one person
     (your say-so, for people who switched devices); a group containing one
-    of your IDs is all you.
+    of your IDs is all you. ``names`` pins a display name per player ID.
     """
     sessions = [s.session for s in sources]
     rep = _rep_of(same or [])
+    name_for = _pinned_names(rep, names)
     ids = hero_ids(sessions)
     hero_reps = {rep(i) for i in ids}
     reports: list[SourceReport] = []
@@ -238,6 +258,10 @@ def merge_sessions(sources: list[Source], same: list[list[str]] | None = None) -
                 members.setdefault(rep(pid), {})[st.player] = name
                 if is_mine(pid):
                     hero_rep = rep(pid)
+    for r, (name, pid) in latest.items():
+        pinned = name_for(pid)
+        if pinned:
+            latest[r] = (pinned, pid)
     hero_key = "%s @ %s" % latest[hero_rep] if hero_rep else None
     all_ids = sorted({pid for r in hero_reps for pid in (i for i in ids if rep(i) == r)} | {
         _split_key(k)[1] for r in hero_reps for k in members.get(r, {})})
@@ -279,7 +303,7 @@ def merge_sessions(sources: list[Source], same: list[list[str]] | None = None) -
         if len({_split_key(k)[1] for k in keys}) < 2:
             continue  # nothing to merge (IDs not seen, or only one of them)
         applied.append({"ids": [i for i in g if i], "as": canon(keys[0]), "members": keys})
-    return Aggregate(merged, all_ids, reports, bbs, applied)
+    return Aggregate(merged, all_ids, reports, bbs, applied, dict(names or {}))
 
 
 def _richer(a: Hand, b: Hand) -> bool:

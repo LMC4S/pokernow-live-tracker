@@ -42,12 +42,15 @@ class StoredSession:
 
 
 class SessionStore:
-    def __init__(self, identities_provider: Callable[[], list[list[str]]] | None = None) -> None:
+    def __init__(self, identities_provider: Callable[[], list[list[str]]] | None = None,
+                 names_provider: Callable[[], dict[str, str]] | None = None) -> None:
         self._lock = threading.Lock()
         self._items: dict[str, StoredSession] = {}
-        # manual "same person" groups, applied to every single session on the
-        # way in (the all-sessions merge applies them itself)
+        # manual "same person" groups and pinned display names, applied to
+        # every single session on the way in (the all-sessions merge applies
+        # them itself)
         self.identities_provider = identities_provider
+        self.names_provider = names_provider
 
     def add(self, name: str, text: str) -> StoredSession:
         sid = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
@@ -58,8 +61,9 @@ class SessionStore:
         return self.put(sid, name, session)
 
     def put(self, sid: str, name: str, session: Session) -> StoredSession:
-        if sid != ME_ID and self.identities_provider is not None:
-            apply_identities(session, self.identities_provider())
+        if sid != ME_ID and (self.identities_provider is not None or self.names_provider is not None):
+            apply_identities(session, self.identities_provider() if self.identities_provider else None,
+                             self.names_provider() if self.names_provider else None)
         stats = compute_session_stats(session)
         stored = StoredSession(id=sid, name=name, session=session, stats=stats)
         with self._lock:
@@ -145,6 +149,7 @@ class CookieRequest(BaseModel):
 
 class IdentitiesRequest(BaseModel):
     same: list[list[str]]  # groups of player IDs that are one person
+    names: dict[str, str] | None = None  # player ID -> pinned display name; omitted keeps the current ones
 
 
 class FetchJobs:
@@ -236,7 +241,7 @@ class FetchJobs:
 
 def create_app(data_dir: str | None = None) -> FastAPI:
     app = FastAPI(title="PokerNow Hand History", version="0.1.0")
-    store = SessionStore(identities_provider=lambda: read_identities())
+    store = SessionStore(identities_provider=lambda: read_identities(), names_provider=lambda: read_names())
 
     # Login cookie pasted through the UI. Kept only in this process's memory
     # (never written to disk) and read fresh on every fetch/poll, so pasting or
@@ -258,31 +263,44 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     # archives not yet parsed, object identity for sessions in the store).
     me_lock = threading.Lock()
     me_cache: dict[str, Any] = {"sig": None, "agg": None}
-    # Manual "same person" groups (player IDs that changed between sessions),
-    # kept next to the archives so they survive restarts.
+    # Manual "same person" groups (player IDs that changed between sessions)
+    # and pinned display names, kept next to the archives so they survive
+    # restarts.
     identities_path = os.path.join(jobs.data_dir, "identities.json")
 
-    def read_identities() -> list[list[str]]:
+    def _read_identities_file() -> dict[str, Any]:
         try:
             with open(identities_path, encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def read_identities() -> list[list[str]]:
+        groups = _read_identities_file().get("same", [])
+        if not isinstance(groups, list):
             return []
-        groups = data.get("same", []) if isinstance(data, dict) else []
         return [[str(i) for i in g if i] for g in groups if isinstance(g, list) and len([i for i in g if i]) >= 2]
 
-    def write_identities(groups: list[list[str]]) -> None:
+    def read_names() -> dict[str, str]:
+        names = _read_identities_file().get("names", {})
+        if not isinstance(names, dict):
+            return {}
+        return {str(k).strip(): str(v).strip() for k, v in names.items() if k and v and str(k).strip() and str(v).strip()}
+
+    def write_identities(groups: list[list[str]], names: dict[str, str]) -> None:
         os.makedirs(jobs.data_dir, exist_ok=True)
         tmp = identities_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"same": groups}, f, ensure_ascii=False, indent=2)
+            json.dump({"same": groups, "names": names}, f, ensure_ascii=False, indent=2)
         os.replace(tmp, identities_path)
 
     def build_me() -> Aggregate:
         sig: list[Any] = []
         loaders: list[Any] = []
         same = read_identities()
-        sig.append(("identities", json.dumps(same, sort_keys=True)))
+        names = read_names()
+        sig.append(("identities", json.dumps(same, sort_keys=True), json.dumps(names, sort_keys=True)))
         if os.path.isdir(jobs.data_dir):
             for name in sorted(os.listdir(jobs.data_dir)):
                 arch = GameArchive(name, jobs.data_dir)
@@ -304,7 +322,7 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         with me_lock:
             if me_cache["sig"] == key and me_cache["agg"] is not None:
                 return me_cache["agg"]
-            agg = merge_sessions([ld() for ld in loaders], same=same)
+            agg = merge_sessions([ld() for ld in loaders], same=same, names=names)
             me_cache["sig"], me_cache["agg"] = key, agg
             if agg.session is not None:
                 store.put(ME_ID, ME_NAME, agg.session)
@@ -321,20 +339,24 @@ def create_app(data_dir: str | None = None) -> FastAPI:
 
     @app.get("/api/identities")
     def identities() -> dict[str, Any]:
-        return {"same": read_identities(), "path": identities_path}
+        return {"same": read_identities(), "names": read_names(), "path": identities_path}
 
     @app.put("/api/identities")
     def set_identities(req: IdentitiesRequest) -> dict[str, Any]:
         groups = [[i.strip() for i in g if i and i.strip()] for g in req.same]
         groups = [g for g in groups if len(g) >= 2]
-        write_identities(groups)
+        if req.names is None:
+            names = read_names()
+        else:
+            names = {k.strip(): v.strip() for k, v in req.names.items() if k.strip() and v.strip()}
+        write_identities(groups, names)
         # re-read every open archive so the single-session views pick the change up
         for item in store.items():
             if item.id.startswith("game-"):
                 arch = GameArchive(item.id[len("game-"):], jobs.data_dir)
                 if arch.exists():
                     store.put(item.id, item.name, load_archive(arch))
-        return {"same": groups, "path": identities_path}
+        return {"same": groups, "names": names, "path": identities_path}
 
     @app.post("/api/me/load")
     def me_load() -> dict[str, Any]:

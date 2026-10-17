@@ -579,10 +579,19 @@
     // manual "same person" groups: IDs that changed between sessions
     const players = [...state.summary.players].sort((x, y) => y.hands - x.hands);
     const opt = (p) => `<option value="${esc(p.player.split(' @ ').pop())}">${esc(p.name)}${p.aka && p.aka.length ? ' (aka ' + esc(p.aka.slice(0, 3).join(', ')) + (p.aka.length > 3 ? '…' : '') + ')' : ''} · ${num(p.hands)} hands</option>`;
-    html += `<div style="margin-top:12px"><b>Same person</b> <span class="muted" style="font-size:12.5px">When someone shows up under a new player ID, tell the merge they are one player. Saved in <code>identities.json</code> next to the archives.</span></div>`;
+    html += `<div style="margin-top:12px"><b>Same person</b> <span class="muted" style="font-size:12.5px">When someone shows up under a new player ID, merge that record into the player it belongs to. The merged row keeps the target's pinned name (set below), otherwise the nickname used last. Saved in <code>identities.json</code> next to the archives.</span></div>`;
     const sameRows = (a.same || []).map((g, i) => `<div class="flowrow" style="padding:3px 0"><span style="flex:1 1 auto">${g.members.map(m => `<span class="pill" title="${esc(m)}">${esc(short(m))}</span>`).join(' = ')} <span class="muted">→ ${esc(short(g.as))}</span></span><a class="same-undo" data-i="${i}" style="color:var(--neg);cursor:pointer;font-size:12.5px">separate</a></div>`).join('');
     if (sameRows) html += `<details id="same-list" style="margin-top:4px"${(() => { try { return localStorage.getItem('sameOpen') === '1' ? ' open' : ''; } catch { return ''; } })()}><summary class="muted" style="cursor:pointer;font-size:12.5px">${a.same.length} merged group${a.same.length === 1 ? '' : 's'} · applies to every session, not only this view</summary>${sameRows}</details>`;
-    html += `<div class="controls" style="margin-top:6px"><select id="same-a">${players.map(opt).join('')}</select><span class="muted">is the same person as</span><select id="same-b">${players.map(opt).join('')}</select><button class="ghost" id="same-add">Merge</button><span class="err hidden" id="same-err" style="margin:0"></span></div>`;
+    // targets: players with a pinned name first (the regulars), then the rest by hands
+    const pinnedIds = new Set(Object.keys(a.names || {}));
+    const isPinned = (p) => pinnedIds.has(p.player.split(' @ ').pop());
+    const targets = [...players.filter(isPinned), ...players.filter(p => !isPinned(p))];
+    html += `<div class="controls" style="margin-top:6px"><span class="muted">Merge</span><select id="same-a">${players.map(opt).join('')}</select><span class="muted">into</span><select id="same-b">${targets.map(opt).join('')}</select><button class="ghost" id="same-add">Merge</button><span class="err hidden" id="same-err" style="margin:0"></span></div>`;
+    // pinned display names: otherwise a player shows under the latest nickname they used
+    const pinned = Object.entries(a.names || {});
+    html += `<div style="margin-top:12px"><b>Display name</b> <span class="muted" style="font-size:12.5px">A player is shown under the nickname they used last. Pin one here to use it everywhere (earlier nicknames still appear as aka).</span></div>`;
+    if (pinned.length) html += `<div style="padding:3px 0">${pinned.map(([id, n]) => `<span class="pill" title="${esc(id)}">${esc(n)}</span> <a class="name-undo" data-id="${esc(id)}" style="color:var(--neg);cursor:pointer;font-size:12.5px">unpin</a>`).join(' · ')}</div>`;
+    html += `<div class="controls" style="margin-top:6px"><select id="name-p">${players.map(opt).join('')}</select><span class="muted">shows as</span><input id="name-v" type="text" placeholder="Name" style="width:140px"><button class="ghost" id="name-set">Pin</button></div>`;
     if (a.big_blinds.length > 1) html += `<div class="warn">Mixed stakes (big blind ${a.big_blinds.join(', ')}). Chip totals add different stakes together. The bb figures on the Insights tab convert hand by hand, but Net (bb) and bb/100 in the players table use the most common blind.</div>`;
     box.innerHTML = html + `</section>`;
     box.classList.remove('hidden');
@@ -610,6 +619,26 @@
       const cur = (await api('/api/identities')).same;
       const ids = new Set(a.same[+el.dataset.i].ids);
       saveSame(cur.filter(g => !g.some(i => ids.has(i))));
+    }));
+    const saveNames = async (names) => {
+      $('#same-err').classList.add('hidden');
+      try {
+        const cur = (await api('/api/identities')).same;
+        await api('/api/identities', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ same: cur, names }) });
+        const r = await api('/api/me/load', { method: 'POST' });
+        await loadSession(r.id, { keep: true });
+      } catch (e) { $('#same-err').textContent = e.message; $('#same-err').classList.remove('hidden'); }
+    };
+    $('#name-set').addEventListener('click', async () => {
+      const id = $('#name-p').value, v = $('#name-v').value.trim();
+      if (!v) { $('#same-err').textContent = 'Type a name.'; $('#same-err').classList.remove('hidden'); return; }
+      saveNames({ ...((await api('/api/identities')).names || {}), [id]: v });
+    });
+    $('#name-v').addEventListener('keydown', e => { if (e.key === 'Enter') $('#name-set').click(); });
+    box.querySelectorAll('.name-undo').forEach(el => el.addEventListener('click', async () => {
+      const names = { ...((await api('/api/identities')).names || {}) };
+      delete names[el.dataset.id];
+      saveNames(names);
     }));
   }
 

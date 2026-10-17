@@ -207,3 +207,42 @@ def test_identities_apply_to_single_sessions_via_api(tmp_path):
     assert len(players) == 3  # 4 players in the fixture, Alice and Bobby collapsed into one row
     merged = next(p for p in players if p["player"].split(" @ ")[1] in ("aaa111", "newdev"))
     assert merged["aka"]  # the other name is shown as aka
+
+
+def test_pinned_display_names():
+    from pokernow.aggregate import apply_identities
+    from pokernow.parser import parse_session
+
+    night1 = _src("g1", TEXT)
+    night2 = _src("g2", _variant(rename={"Bob @ bbb222": "bOb @ newdev"}))
+    # any ID of the person pins the name for the whole group; a lone ID renames too
+    agg = merge_sessions([night1, night2], same=[["bbb222", "newdev"]], names={"bbb222": "Robert", "aaa111": "Al"})
+    m = agg.session
+    assert m.hero == "Al @ aaa111"
+    assert {p for h in m.hands for p in h.players if "bbb222" in p or "newdev" in p} == {"Robert @ newdev"}
+    assert m.aliases["bOb @ newdev"] == "Robert @ newdev" and m.aliases["Bob @ bbb222"] == "Robert @ newdev"
+    assert agg.same[0]["as"] == "Robert @ newdev" and agg.names == {"bbb222": "Robert", "aaa111": "Al"}
+    rob = next(p for p in compute_session_stats(m).players if p.player == "Robert @ newdev")
+    assert rob.hands == 12 and rob.aka == ["Bob", "bOb"]
+
+    s = parse_session(TEXT)
+    assert apply_identities(s, None, {"bbb222": "Robert"}) == []  # nothing merged, but renamed
+    assert {p for h in s.hands for p in h.players if "bbb222" in p} == {"Robert @ bbb222"}
+    assert s.aliases["Bob @ bbb222"] == "Robert @ bbb222"
+
+
+def test_api_identities_names(tmp_path):
+    client = TestClient(create_app(str(tmp_path)))
+    client.post("/api/sessions", files={"file": ("n1.csv", TEXT.encode(), "text/csv")})
+    names = lambda: {p["name"] for p in client.post("/api/me/load").json()["summary"]["players"]}  # noqa: E731
+    assert "Bob" in names()
+    r = client.put("/api/identities", json={"same": [], "names": {"bbb222": "Robert", " ": "x"}})
+    assert r.json()["names"] == {"bbb222": "Robert"}
+    assert "Robert" in names() and "Bob" not in names()
+    assert client.get("/api/identities").json()["names"] == {"bbb222": "Robert"}
+    # omitting names keeps them
+    client.put("/api/identities", json={"same": []})
+    assert client.get("/api/identities").json()["names"] == {"bbb222": "Robert"}
+    # single-session views are renamed too (uploads on the way in; archives are re-read on save)
+    sid = client.post("/api/sessions", files={"file": ("n2.csv", _variant().encode(), "text/csv")}).json()["id"]
+    assert "Robert" in {p["name"] for p in client.get(f"/api/sessions/{sid}").json()["summary"]["players"]}

@@ -425,3 +425,92 @@ def test_evolution_big_pots_and_net():
     # and the first (centred on hand 82, both early pots close by) is the highest
     assert all(v > 0 for v in w["net100"]) and w["net100"][0] == max(w["net100"])
     assert w["cum"][0] == round(sum(-0.5 if i not in big_at else 120 for i in range(82)), 1)
+
+
+def _muck_json():
+    """Hand 1 of `_session_json` (Alice's AA all in on the flop, outdrawn by
+    Bob's shown AJ) plus a hand Alice wins at showdown where Bob mucks: Alice
+    bets the river with top pair, Bob calls and does not show."""
+    raw = json.loads(_session_json())
+    t = 1710100000000 + 120000
+    raw["hands"].append({
+        "id": "h3", "handVersion": 2, "number": "3", "gameType": "th", "cents": False,
+        "smallBlind": 5, "bigBlind": 10, "ante": None, "straddleSeat": None, "dealerSeat": 1,
+        "startedAt": t, "bombPot": False, "doubleBoard": None,
+        "players": [dict(A, stack=500, hand=["Ks", "Qs"]), dict(B, stack=500)],
+        "events": [
+            _ev(t + 1, type=3, seat=1, value=5),
+            _ev(t + 2, type=2, seat=2, value=10),
+            _ev(t + 3, type=8, seat=1, value=30),
+            _ev(t + 4, type=7, seat=2, value=30),
+            _ev(t + 5, type=9, turn=1, run=1, cards=["Kh", "7d", "2c"]),
+            _ev(t + 6, type=1, seat=2, value=40),
+            _ev(t + 7, type=7, seat=1, value=40),
+            _ev(t + 8, type=9, turn=2, run=1, cards=["3d"]),
+            _ev(t + 9, type=1, seat=2, value=100),
+            _ev(t + 10, type=7, seat=1, value=100),
+            _ev(t + 11, type=9, turn=3, run=1, cards=["9s"]),
+            _ev(t + 12, type=1, seat=2, value=200),
+            _ev(t + 13, type=7, seat=1, value=200),
+            _ev(t + 14, type=15),
+            _ev(t + 15, type=12, seat=1, cards=["Ks", "Qs"]),
+            _ev(t + 16, type=10, pot=740, seat=1, value=740, cards=["Ks", "Qs"],
+                combination=["Ks", "Kh", "Qs", "9s", "7d"], handDescription="Pair, K's",
+                position=1, runNumber="1", hiLo="h"),
+        ],
+    })
+    return json.dumps(raw)
+
+
+def test_money_luck_separates_allin_from_mucked_showdowns():
+    """Losers muck, so a hero's won showdowns mostly go unscored while every
+    lost one is scored. The shown-hand total therefore drifts negative for the
+    hero no matter what the deck did; the all-in slice is scored whoever won
+    and is the number to compare players on."""
+    session = parse_text(_muck_json(), source_name="muck.json")
+    ins = compute_insights(session, big_blind=10)
+    alice = next(v for k, v in ins["luck"].items() if k.startswith("Alice"))
+    bob = next(v for k, v in ins["luck"].items() if k.startswith("Bob"))
+
+    # the won showdown is unscored for both survivors (Bob mucked)...
+    assert alice["measured"] == bob["measured"] == 1
+    assert alice["unmeasured_n"] == bob["unmeasured_n"] == 1
+    assert alice["unmeasured_net"] == 370 and bob["unmeasured_net"] == -370
+    # ...so shown-hand luck is just the lost all-in: deeply negative for Alice
+    assert alice["luck"] < -700 and alice["luck"] + bob["luck"] == 0
+    # the all-in slice is complete: nothing was all in and left unscored
+    assert alice["allin_n"] == bob["allin_n"] == 1
+    assert alice["allin_unmeasured_n"] == bob["allin_unmeasured_n"] == 0
+    assert alice["allin_luck"] == alice["luck"]
+    assert alice["allin_adjusted_net"] == alice["net"] - alice["allin_luck"]
+    assert alice["net"] == -500 - 10 + 370  # h1 lost, h2 blind folded, h3 won
+    # the unscored won hand is visible as money, not silently dropped
+    assert alice["unmeasured_net"] > 0 > bob["unmeasured_net"]
+
+
+def test_run_it_twice_allin_is_counted_as_unscored():
+    """A run-it-twice all-in showdown cannot be scored, but it is skipped
+    whoever won, so it is reported next to the all-in count rather than
+    folded into the mucked-hand gap."""
+    raw = json.loads(_session_json())
+    h = raw["hands"][0]
+    h["id"] = "h1-rit"  # the luck cache is keyed by hand id
+    t = h["startedAt"]
+    # second run of the turn and river after the all-in
+    h["events"] = [e for e in h["events"] if e["payload"].get("type") not in (9,)] + [
+        _ev(t + 5, type=9, turn=1, run=1, cards=["Kh", "Qd", "2c"]),
+        _ev(t + 8, type=9, turn=2, run=1, cards=["3d"]),
+        _ev(t + 9, type=9, turn=3, run=1, cards=["Ts"]),
+        _ev(t + 8, type=9, turn=2, run=2, cards=["4d"]),
+        _ev(t + 9, type=9, turn=3, run=2, cards=["5s"]),
+    ]
+    h["events"].sort(key=lambda e: e["at"])
+    session = parse_text(json.dumps(raw), source_name="rit.json")
+    if len(session.hands[0].board_runs) < 2:
+        import pytest
+        pytest.skip("fixture did not parse as a multi-run board")
+    ins = compute_insights(session, big_blind=10)
+    alice = next(v for k, v in ins["luck"].items() if k.startswith("Alice"))
+    assert alice["measured"] == 0
+    assert alice["allin_n"] == 0
+    assert alice["allin_unmeasured_n"] == 1

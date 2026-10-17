@@ -12,7 +12,10 @@ tracker and refresh live:
   pure in-position / out-of-position split.
 - **Run-good meter** — for every player (from showdown-revealed cards): card
   luck decomposed street by street (equity swing of each reveal × the pot at
-  that moment), plus every big pot lost at showdown sorted into *outdrawn*
+  that moment). The headline is the all-in part of it, the only slice scored
+  whoever won; the shown-hand total is kept but is selection-biased, since
+  losers muck (see the note in `compute_insights`). Plus every big pot lost at
+  showdown sorted into *outdrawn*
   (ahead when the money went in), *cooler* (behind, but holding a hand nobody
   folds) or *other*. Each hand also gets a Gambit-style "top X% of hands"
   strength percentile at the street the money went in.
@@ -993,12 +996,25 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
                 # the money went in), cooler (behind with a hand nobody
                 # folds) or other (behind with less than that)
                 "big_loss": {k: {"n": 0, "chips": 0} for k in ("outdrawn", "cooler", "other")},
+                # all-in showdowns: cards are dealt face up once the money is
+                # in, so these are scored whoever won — the only luck number
+                # that compares fairly across players (see below)
                 "allin_n": 0,
                 "allin_luck": 0.0,
+                "allin_unmeasured_n": 0,  # all-in showdowns not scored (run it twice)
                 "net": 0,
             },
         )
 
+    # Selection bias, and why two luck numbers are kept apart. A showdown
+    # is scored only when two or more survivors' cards are known. The hero's
+    # cards come from their own log, so every showdown the hero *lost* is
+    # scored (the winner has to show). Most showdowns the hero *won* are not:
+    # the loser mucks. Summed over shown hands the hero therefore reads
+    # unlucky and the villains lucky, whatever actually happened. Once a
+    # player is all in and called the cards go face up regardless of the
+    # outcome, so all-in luck has no such bias; the only all-in showdowns
+    # left out are run-it-twice hands, which are skipped whoever won.
     nets: dict[str, int] = {}
     luck_bb: dict[str, float] = {}
     for h in hands:
@@ -1006,6 +1022,7 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
             nets[p] = nets.get(p, 0) + h.net(p)
         luck = _hand_luck_cached(h)
         if h.went_to_showdown:
+            allin_players = {x.player for x in h.actions if x.all_in}
             # survivors whose hands could not be scored: their result is
             # invisible to the luck number — surface how much money that is
             for p in h.survivors:
@@ -1013,16 +1030,17 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
                     a = lacc(p)
                     a["unmeasured_n"] += 1
                     a["unmeasured_net"] += h.net(p)
+                    if p in allin_players:
+                        a["allin_unmeasured_n"] += 1
         if not luck:
             continue
-        any_allin = any(a.all_in for a in h.actions)
         for p, r in luck.items():
             a = lacc(p)
             a["measured"] += 1
             a["luck"] += r["luck"]
             if hbb(h):
                 luck_bb[p] = luck_bb.get(p, 0.0) + r["luck"] / hbb(h)
-            if any_allin and any(x.player == p and x.all_in for x in h.actions):
+            if p in allin_players:
                 a["allin_n"] += 1
                 a["allin_luck"] += r["luck"]
             kind = _big_loss_kind(h, p, r, hbb(h))
@@ -1035,7 +1053,11 @@ def compute_insights(session: Session, big_blind: int | None = None) -> dict[str
         a["luck"] = round(a["luck"])
         a["allin_luck"] = round(a["allin_luck"])
         a["luck_bb"] = round(luck_bb.get(p, 0.0), 1) if bb else None
+        # shown-hand adjustment: biased for anyone whose won showdowns go
+        # unscored (the hero above all) — kept for the hand-level views
         a["adjusted_net"] = a["net"] - a["luck"]
+        # the fair one: net minus all-in luck (PokerTracker's "all-in adjusted")
+        a["allin_adjusted_net"] = a["net"] - a["allin_luck"]
 
     return {
         "hero": hero,

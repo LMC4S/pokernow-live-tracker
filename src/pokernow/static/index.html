@@ -275,7 +275,7 @@
     <section>
       <h2>Players <small>click a column to sort · click a player to filter hands</small>
         <label class="muted" style="float:right;font-size:12px;font-weight:normal;cursor:pointer" title="Deduct a simulated casino rake from each pot winner: 10% of the pot capped at 5/3 bb, plus a 2/3 bb promo drop (Venetian 1/3 rules with $3 = 1 bb). No flop, no drop. Changes only Net, Net (bb) and bb/100."><input type="checkbox" id="rake-toggle" style="vertical-align:-2px"> Rake (Venetian 1/3 equiv.)</label></h2>
-      <div class="panel" style="max-height:420px"><table id="players"><thead></thead><tbody></tbody></table></div>
+      <div class="panel"><table id="players"><thead></thead><tbody></tbody></table></div>
     </section>
 
     <section>
@@ -728,8 +728,8 @@
       let v = p[k];
       if (k === 'af' && v >= 999) v = '∞';
       if (k === 'name') {
-        const aka = (p.aka && p.aka.length) ? ` <span class="muted" style="font-weight:normal">aka ${p.aka.map(esc).join(', ')}</span>` : '';
-        return `<td title="${esc(p.player)}">${esc(v)}${aka}</td>`;
+        const tip = (p.aka && p.aka.length) ? `${p.player} · aka ${p.aka.join(', ')}` : p.player;
+        return `<td title="${esc(tip)}">${esc(v)}</td>`;
       }
       const c = (k === 'net' || k === 'net_bb' || k === 'bb_per_100') ? cls(p[k]) : '';
       const txt = (k === 'net' || k === 'net_bb' || k === 'bb_per_100') ? signed(fmt(v)) : (k === 'biggest_pot_won' || k === 'hands' ? num(v) : fmt(v));

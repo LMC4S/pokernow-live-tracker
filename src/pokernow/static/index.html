@@ -213,7 +213,6 @@
   <span class="spacer"></span>
   <span id="live-status" class="muted hidden" style="font-size:12.5px"></span>
   <button class="ghost hidden" id="btn-live">● Go live</button>
-  <select id="session-select" class="hidden"></select>
   <button class="ghost open-help" title="How to use this — and how to include your own hole cards" style="min-width:32px;padding:6px 0">?</button>
   <button class="ghost" id="btn-new">⌂ Home</button>
 </header>
@@ -547,9 +546,6 @@
 
   async function refreshSessionList() {
     const list = await api('/api/sessions');
-    const sel = $('#session-select');
-    sel.innerHTML = list.map(s => `<option value="${s.id}" ${s.id === state.sid ? 'selected' : ''}>${esc(s.name)} (${s.hands} hands)</option>`).join('');
-    sel.classList.toggle('hidden', list.length < 2);
     state.nUploads = list.filter(s => s.id !== 'me' && !s.id.startsWith('game-')).length; updateMeBox();
   }
   function updateMeBox() { $('#me-box').classList.toggle('hidden', !(state.nArchives || state.nUploads)); }
@@ -616,7 +612,6 @@
       saveSame(cur.filter(g => !g.some(i => ids.has(i))));
     }));
   }
-  $('#session-select').addEventListener('change', (e) => loadSession(e.target.value));
 
   // ---------- session ----------
   async function loadSession(sid, opts = {}) {
